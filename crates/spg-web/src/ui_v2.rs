@@ -1,6 +1,6 @@
 use crate::models::{GalaxyPageView, ProviderStatusView, SetupPageView};
-use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use leptos::*;
 
 const ASSET_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-wireframe-v2");
@@ -297,12 +297,12 @@ fn render_provider_card(provider: ProviderStatusView) -> impl IntoView {
         .last_error
         .clone()
         .unwrap_or_else(|| "暂无错误".to_string());
-    let saved_key_copy = if provider.api_key.is_empty() {
+    let saved_key_copy = if provider.api_key_summary.is_none() {
         "未保存任何 Key".to_string()
     } else {
         format!(
             "已保存：{}。输入新的值并保存后才会覆盖当前 Key。",
-            provider.api_key
+            provider.api_key_summary.clone().unwrap_or_default()
         )
     };
 
@@ -310,7 +310,7 @@ fn render_provider_card(provider: ProviderStatusView) -> impl IntoView {
         <article
             class="provider-card"
             data-provider=provider.provider.clone()
-            data-saved-key-mask=provider.api_key.clone()
+            data-has-api-key=if provider.has_api_key { "true" } else { "false" }
         >
             <div class="provider-card-top">
                 <div>
@@ -331,7 +331,7 @@ fn render_provider_card(provider: ProviderStatusView) -> impl IntoView {
                         class="text-input"
                         name="api_key"
                         type="password"
-                        value=provider.api_key.clone()
+                        value=""
                         placeholder="输入新的 API Key"
                         autocomplete="new-password"
                         spellcheck="false"
@@ -339,6 +339,10 @@ fn render_provider_card(provider: ProviderStatusView) -> impl IntoView {
                         data-1p-ignore="true"
                     />
                     <small class="field-hint">{saved_key_copy}</small>
+                </label>
+                <label class="field">
+                    <span>"清除 Key"</span>
+                    <input class="toggle-input" name="clear_api_key" type="checkbox"/>
                 </label>
                 <label class="field field-wide">
                     <span>"Base URL"</span>

@@ -1,8 +1,8 @@
 use aes_gcm_siv::aead::{Aead, KeyInit};
 use aes_gcm_siv::{Aes256GcmSiv, Nonce};
-use anyhow::{Context, Result, anyhow};
-use base64::Engine;
+use anyhow::{anyhow, Context, Result};
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -41,16 +41,21 @@ impl HybridSecretStore {
 
 impl SecretStore for HybridSecretStore {
     fn set_secret(&self, key: &str, value: &str) -> Result<()> {
-        // Always persist into the local encrypted vault so the setup page can
-        // read the secret back even on machines where keyring write/read
-        // semantics are inconsistent.
-        self.fallback.set_secret(key, value)?;
-
-        let _ = self.entry(key).and_then(|entry| {
+        let keyring_result = self.entry(key).and_then(|entry| {
             entry
                 .set_password(value)
                 .context("failed to write keyring secret")
         });
+
+        if keyring_result.is_ok()
+            && !persist_fallback_copy()
+            && self.keyring_round_trips(key).unwrap_or(false)
+        {
+            let _ = self.fallback.delete_secret(key);
+            return Ok(());
+        }
+
+        self.fallback.set_secret(key, value)?;
 
         Ok(())
     }
@@ -75,6 +80,24 @@ impl SecretStore for HybridSecretStore {
         });
 
         self.fallback.delete_secret(key)
+    }
+}
+
+fn persist_fallback_copy() -> bool {
+    matches!(
+        std::env::var("SPG_WEB_FORCE_FILE_SECRET_FALLBACK"),
+        Ok(value) if matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES")
+    )
+}
+
+impl HybridSecretStore {
+    fn keyring_round_trips(&self, key: &str) -> Result<bool> {
+        let secret = self.entry(key).and_then(|entry| {
+            entry
+                .get_password()
+                .context("failed to read keyring secret")
+        })?;
+        Ok(!secret.trim().is_empty())
     }
 }
 

@@ -1,9 +1,9 @@
 use crate::models::{AssetBundle, PipelineRunResult};
 use crate::text_utils::fingerprint;
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 

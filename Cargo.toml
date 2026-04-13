@@ -2,6 +2,7 @@
 members = [
     "crates/spg-core",
     "crates/spg-web",
+    "crates/spg-desktop",
 ]
 resolver = "2"
 

@@ -3,8 +3,8 @@ use serde_json::{Number, Value};
 use sha1::{Digest, Sha1};
 use std::collections::{HashMap, HashSet};
 use time::{
-    Date, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset, format_description,
-    format_description::well_known::Rfc3339,
+    format_description, format_description::well_known::Rfc3339, Date, OffsetDateTime,
+    PrimitiveDateTime, Time, UtcOffset,
 };
 use unicode_normalization::UnicodeNormalization;
 use url::Url;

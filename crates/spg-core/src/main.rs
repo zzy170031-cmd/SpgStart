@@ -2,8 +2,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use serde_json::json;
 use spg_core::{
-    SPGInputPipeline, SQLiteStorage, build_asset_index, default_asset_path, load_asset_bundle,
-    load_raw_items_from_jsonl, sample_input_path,
+    build_asset_index, default_asset_path, load_asset_bundle, load_raw_items_from_jsonl,
+    sample_input_path, SPGInputPipeline, SQLiteStorage,
 };
 use std::path::{Path, PathBuf};
 

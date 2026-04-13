@@ -2,7 +2,7 @@ use rusqlite::Connection;
 use serde_json::json;
 use spg_core::models::{AliasRule, AssetBundle, GameAsset, RawSourceItem};
 use spg_core::{
-    SPGInputPipeline, SQLiteStorage, build_asset_index, default_asset_path, load_asset_bundle,
+    build_asset_index, default_asset_path, load_asset_bundle, SPGInputPipeline, SQLiteStorage,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -66,6 +66,25 @@ fn resolves_official_source_with_strong_match() {
         signal.normalized_published_at.as_deref(),
         Some("2026-04-10T02:00:00Z")
     );
+}
+
+#[test]
+fn resolves_new_slg_seed_games_from_standard_name() {
+    let pipeline = make_pipeline();
+    let item = make_raw_item(
+        "raw_sgmdtx_alias",
+        "douyin",
+        "content_platform",
+        "三国谋定天下新赛季开荒阵容怎么配",
+        "这条内容围绕三国谋定天下赛季开荒、配将和同盟节奏做拆解。",
+        "SLG情报局",
+        "https://www.douyin.com/video/sgmdtx001",
+    );
+
+    let result = pipeline.process(vec![item]);
+    let signal = &result.signals[0];
+    assert_eq!(signal.resolved_game_id.as_deref(), Some("game_sgmdtx"));
+    assert_eq!(signal.track_id.as_deref(), Some("slg"));
 }
 
 #[test]
@@ -155,12 +174,10 @@ fn keeps_distinct_versions_out_of_information_duplicates() {
 
     let result = pipeline.process(vec![s12, s13]);
     assert_eq!(result.dedupe_groups.len(), 0);
-    assert!(
-        result
-            .signals
-            .iter()
-            .all(|signal| signal.duplicate_type == "none")
-    );
+    assert!(result
+        .signals
+        .iter()
+        .all(|signal| signal.duplicate_type == "none"));
 }
 
 #[test]

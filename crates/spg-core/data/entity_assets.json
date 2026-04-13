@@ -99,6 +99,166 @@
         "party.163.com",
         "eggy-party"
       ]
+    },
+    {
+      "game_id": "game_stzb",
+      "standard_name": "率土之滨",
+      "track": "slg",
+      "representative_work": "率土之滨",
+      "aliases": [
+        {
+          "value": "率土之滨",
+          "strength": "strong",
+          "source": "standard_name"
+        },
+        {
+          "value": "率土",
+          "strength": "weak",
+          "source": "short_name"
+        }
+      ],
+      "official_accounts": [
+        "率土之滨",
+        "率土之滨官方"
+      ],
+      "official_url_seeds": [
+        "stzb.163.com"
+      ]
+    },
+    {
+      "game_id": "game_sgqycdjz",
+      "standard_name": "三国群英传：策定九州",
+      "track": "slg",
+      "representative_work": "三国群英传：策定九州",
+      "aliases": [
+        {
+          "value": "三国群英传：策定九州",
+          "strength": "strong",
+          "source": "standard_name"
+        },
+        {
+          "value": "三国群英传策定九州",
+          "strength": "strong",
+          "source": "punctuation_variant"
+        },
+        {
+          "value": "策定九州",
+          "strength": "weak",
+          "source": "community_alias"
+        }
+      ],
+      "official_accounts": [
+        "三国群英传：策定九州",
+        "三国群英传策定九州",
+        "三国群英传：策定九州官方"
+      ],
+      "official_url_seeds": []
+    },
+    {
+      "game_id": "game_sgmdtx",
+      "standard_name": "三国谋定天下",
+      "track": "slg",
+      "representative_work": "三国谋定天下",
+      "aliases": [
+        {
+          "value": "三国谋定天下",
+          "strength": "strong",
+          "source": "standard_name"
+        },
+        {
+          "value": "谋定天下",
+          "strength": "weak",
+          "source": "short_name"
+        },
+        {
+          "value": "三谋",
+          "strength": "weak",
+          "source": "community_alias"
+        }
+      ],
+      "official_accounts": [
+        "三国谋定天下",
+        "三国谋定天下官方"
+      ],
+      "official_url_seeds": []
+    },
+    {
+      "game_id": "game_wjdr",
+      "standard_name": "无尽冬日",
+      "track": "slg",
+      "representative_work": "无尽冬日",
+      "aliases": [
+        {
+          "value": "无尽冬日",
+          "strength": "strong",
+          "source": "standard_name"
+        }
+      ],
+      "official_accounts": [
+        "无尽冬日",
+        "无尽冬日官方"
+      ],
+      "official_url_seeds": []
+    },
+    {
+      "game_id": "game_sgbhsd",
+      "standard_name": "三国：冰河时代",
+      "track": "slg",
+      "representative_work": "三国：冰河时代",
+      "aliases": [
+        {
+          "value": "三国：冰河时代",
+          "strength": "strong",
+          "source": "standard_name"
+        },
+        {
+          "value": "三国冰河时代",
+          "strength": "strong",
+          "source": "punctuation_variant"
+        }
+      ],
+      "official_accounts": [
+        "三国：冰河时代",
+        "三国冰河时代",
+        "三国：冰河时代官方"
+      ],
+      "official_url_seeds": []
+    },
+    {
+      "game_id": "game_txgx",
+      "standard_name": "天下归心",
+      "track": "slg",
+      "representative_work": "天下归心",
+      "aliases": [
+        {
+          "value": "天下归心",
+          "strength": "strong",
+          "source": "standard_name"
+        }
+      ],
+      "official_accounts": [
+        "天下归心",
+        "天下归心官方"
+      ],
+      "official_url_seeds": []
+    },
+    {
+      "game_id": "game_jmzy",
+      "standard_name": "九牧之野",
+      "track": "slg",
+      "representative_work": "九牧之野",
+      "aliases": [
+        {
+          "value": "九牧之野",
+          "strength": "strong",
+          "source": "standard_name"
+        }
+      ],
+      "official_accounts": [
+        "九牧之野",
+        "九牧之野官方"
+      ],
+      "official_url_seeds": []
     }
   ],
   "negative_aliases": [
@@ -109,6 +269,12 @@
     "活动预告"
   ],
   "event_rules": {
+    "season": [
+      "赛季",
+      "新赛季",
+      "征服赛季",
+      "赛季开启"
+    ],
     "version": [
       "版本",
       "赛季",

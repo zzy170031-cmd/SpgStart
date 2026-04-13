@@ -8,18 +8,26 @@ pub enum ProviderKind {
     Firecrawl,
     Tavily,
     Exa,
-    Gemini,
 }
 
 impl ProviderKind {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 5] = [
         Self::Doubao,
         Self::Serper,
         Self::Firecrawl,
         Self::Tavily,
         Self::Exa,
-        Self::Gemini,
     ];
+
+    pub const REQUIRED: [Self; 5] = [
+        Self::Doubao,
+        Self::Serper,
+        Self::Firecrawl,
+        Self::Tavily,
+        Self::Exa,
+    ];
+
+    pub const OPTIONAL: [Self; 0] = [];
 
     pub fn slug(self) -> &'static str {
         match self {
@@ -28,7 +36,6 @@ impl ProviderKind {
             Self::Firecrawl => "firecrawl",
             Self::Tavily => "tavily",
             Self::Exa => "exa",
-            Self::Gemini => "gemini",
         }
     }
 
@@ -39,7 +46,6 @@ impl ProviderKind {
             Self::Firecrawl => "Firecrawl",
             Self::Tavily => "Tavily",
             Self::Exa => "Exa",
-            Self::Gemini => "Gemini",
         }
     }
 
@@ -50,7 +56,6 @@ impl ProviderKind {
             Self::Firecrawl => "正文抽取器，只用于值得抓取的页面。",
             Self::Tavily => "时效验证补位，适合新闻与热点核验。",
             Self::Exa => "长尾语义扩展，做深挖和相邻发现。",
-            Self::Gemini => "复杂 fallback，处理特殊页面和临时补位。",
         }
     }
 
@@ -61,7 +66,6 @@ impl ProviderKind {
             Self::Firecrawl => "https://api.firecrawl.dev",
             Self::Tavily => "https://api.tavily.com",
             Self::Exa => "https://api.exa.ai",
-            Self::Gemini => "https://generativelanguage.googleapis.com",
         }
     }
 
@@ -72,7 +76,6 @@ impl ProviderKind {
             Self::Firecrawl => 500,
             Self::Tavily => 1_000,
             Self::Exa => 1_000,
-            Self::Gemini => 5_000,
         }
     }
 
@@ -83,7 +86,6 @@ impl ProviderKind {
             Self::Firecrawl => 16,
             Self::Tavily => 33,
             Self::Exa => 33,
-            Self::Gemini => 166,
         }
     }
 
@@ -94,7 +96,6 @@ impl ProviderKind {
             Self::Firecrawl => "content_fetch",
             Self::Tavily => "freshness_verify",
             Self::Exa => "long_tail_discovery",
-            Self::Gemini => "complex_fallback",
         }
     }
 
@@ -105,8 +106,11 @@ impl ProviderKind {
             Self::Firecrawl => 3,
             Self::Tavily => 4,
             Self::Exa => 5,
-            Self::Gemini => 6,
         }
+    }
+
+    pub fn is_required(self) -> bool {
+        true
     }
 }
 
@@ -126,7 +130,6 @@ impl std::str::FromStr for ProviderKind {
             "firecrawl" => Ok(Self::Firecrawl),
             "tavily" => Ok(Self::Tavily),
             "exa" => Ok(Self::Exa),
-            "gemini" => Ok(Self::Gemini),
             other => Err(format!("unknown provider: {other}")),
         }
     }
@@ -138,7 +141,8 @@ pub struct ProviderStatusView {
     pub display_name: String,
     pub description: String,
     pub enabled: bool,
-    pub api_key: String,
+    pub has_api_key: bool,
+    pub api_key_summary: Option<String>,
     pub base_url: String,
     pub monthly_limit: i64,
     pub daily_soft_limit: i64,
@@ -148,20 +152,45 @@ pub struct ProviderStatusView {
     pub last_verified_at: Option<String>,
     pub last_error: Option<String>,
     pub latency_ms: Option<i64>,
+    pub is_required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnlockStateView {
     pub ready_count: usize,
     pub total_count: usize,
+    pub optional_ready_count: usize,
+    pub optional_total_count: usize,
     pub unlocked: bool,
     pub blockers: Vec<String>,
+    pub required_providers: Vec<String>,
+    pub optional_providers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalUserView {
+    pub username: String,
+    pub device_name: String,
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GateStateView {
+    pub current_stage: String,
+    pub local_user_confirmed: bool,
+    pub confirmed_username: Option<String>,
+    pub confirmed_device_name: Option<String>,
+    pub api_gate_passed: bool,
+    pub required_providers: Vec<String>,
+    pub last_logout_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderUpdateRequest {
     pub enabled: bool,
     pub api_key: Option<String>,
+    #[serde(default)]
+    pub clear_api_key: bool,
     pub base_url: String,
     pub monthly_limit: i64,
     pub daily_soft_limit: i64,
@@ -186,6 +215,19 @@ pub struct ProviderTestResponse {
     pub quota_snapshot: QuotaSnapshot,
     pub error_message: Option<String>,
     pub verified_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoginPageView {
+    pub local_user: LocalUserView,
+    pub gate_state: GateStateView,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DesktopLauncherPageView {
+    pub local_user: LocalUserView,
+    pub gate_state: GateStateView,
+    pub app_version: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -265,15 +307,153 @@ pub struct GalaxyListResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetupPageView {
     pub mode: String,
+    pub local_user: LocalUserView,
+    pub gate_state: GateStateView,
     pub providers: Vec<ProviderStatusView>,
     pub unlock_state: UnlockStateView,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GalaxyPageView {
+    pub local_user: LocalUserView,
+    pub gate_state: GateStateView,
     pub summary: GalaxySummaryView,
     pub default_tab: String,
     pub games: Vec<GalaxyGameListItem>,
     pub initial_focus: GalaxyFocusView,
     pub unlock_state: UnlockStateView,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkbenchSettings {
+    pub platform: String,
+    pub watchlist_games: Vec<String>,
+    pub keyword_templates: Vec<String>,
+    pub time_window_hours: i64,
+    pub schedule_interval_hours: i64,
+    pub max_candidates_per_run: i64,
+    pub doubao_model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiBudgetUsageView {
+    pub provider: String,
+    pub enabled: bool,
+    pub monthly_limit: i64,
+    pub daily_soft_limit: i64,
+    pub reserve_pool: i64,
+    pub per_run_limit: i64,
+    pub used_monthly: i64,
+    pub used_today: i64,
+    pub remaining_monthly: i64,
+    pub remaining_today: i64,
+    pub allowed_this_run: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnalysisRun {
+    pub run_id: String,
+    pub trigger: String,
+    pub status: String,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub candidate_count: i64,
+    pub shortlisted_count: i64,
+    pub content_count: i64,
+    pub error_message: Option<String>,
+    pub provider_usage: Vec<ApiBudgetUsageView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveredCandidate {
+    pub content_id: String,
+    pub source_id: String,
+    pub title: String,
+    pub summary: String,
+    pub url: String,
+    pub platform: String,
+    pub author: String,
+    pub published_at: String,
+    pub source_domain: String,
+    pub discovery_query: String,
+    pub tags: Vec<String>,
+    pub game_id: Option<String>,
+    pub game_name: Option<String>,
+    pub event_type: Option<String>,
+    pub topic_tags: Vec<String>,
+    pub engagement_score: f64,
+    pub freshness_score: f64,
+    pub cross_source_score: f64,
+    pub doubao_relevance_score: f64,
+    pub hotness_score: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BreakdownCard {
+    pub content_id: String,
+    pub content_summary: String,
+    pub hook_points: Vec<String>,
+    pub core_conflict_or_value: String,
+    pub audience_fit: String,
+    pub adaptation_angles: Vec<String>,
+    pub title_directions: Vec<String>,
+    pub topic_pool_reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RankingSnapshot {
+    pub kind: String,
+    pub rank: i64,
+    pub entity_id: String,
+    pub content_id: Option<String>,
+    pub title: String,
+    pub subtitle: String,
+    pub score: f64,
+    pub game_id: Option<String>,
+    pub event_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicPoolItem {
+    pub topic_id: String,
+    pub content_id: String,
+    pub title: String,
+    pub note: String,
+    pub score: f64,
+    pub source_url: String,
+    pub game_name: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkbenchOverview {
+    pub latest_run: Option<AnalysisRun>,
+    pub content_rankings: Vec<RankingSnapshot>,
+    pub game_rankings: Vec<RankingSnapshot>,
+    pub event_rankings: Vec<RankingSnapshot>,
+    pub topic_pool_count: usize,
+    pub budgets: Vec<ApiBudgetUsageView>,
+    pub settings: WorkbenchSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkbenchContentView {
+    pub candidate: DiscoveredCandidate,
+    pub breakdown: BreakdownCard,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkbenchPageView {
+    pub local_user: LocalUserView,
+    pub gate_state: GateStateView,
+    pub unlock_state: UnlockStateView,
+    pub overview: WorkbenchOverview,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopicPoolCreateRequest {
+    pub content_id: String,
+    #[serde(default)]
+    pub note: String,
 }

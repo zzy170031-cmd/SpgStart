@@ -430,9 +430,7 @@ impl SPGInputPipeline {
         }
 
         for (seed, game_id) in &self.assets.official_url_seed_index {
-            if !clean.normalized_url.is_empty()
-                && url_seed_matches(&clean.normalized_url, seed)
-            {
+            if !clean.normalized_url.is_empty() && url_seed_matches(&clean.normalized_url, seed) {
                 add_match(game_id, seed, "strong", "official_url_seed", 0.98);
             }
         }
@@ -787,15 +785,14 @@ where
 /// 2. Sub-domain match:  host ends with ".{seed}"
 /// 3. Host+path match:   "{host}{path}" contains seed  (for path-style seeds like "eggy-party")
 fn url_seed_matches(normalized_url: &str, seed: &str) -> bool {
+    let seed_lower = seed.to_lowercase();
     let Ok(parsed) = Url::parse(normalized_url) else {
-        // Fallback: if URL cannot be parsed, use old substring match
-        return normalized_url.to_lowercase().contains(seed);
+        return false;
     };
     let Some(host) = parsed.host_str() else {
         return false;
     };
     let host_lower = host.to_lowercase();
-    let seed_lower = seed.to_lowercase();
 
     // 1. Exact host match
     if host_lower == seed_lower {
@@ -805,7 +802,10 @@ fn url_seed_matches(normalized_url: &str, seed: &str) -> bool {
     if host_lower.ends_with(&format!(".{seed_lower}")) {
         return true;
     }
-    // 3. Host+path match for non-domain seeds (e.g. "eggy-party" in "eggy-party.163.com/xxx")
+    // 3. Host+path match for non-domain/path-style seeds (e.g. "eggy-party")
+    if seed_lower.contains('.') {
+        return false;
+    }
     let full = format!("{}{}", host_lower, parsed.path());
     full.contains(&seed_lower)
 }
@@ -823,11 +823,12 @@ fn unique_tracks(assets: &AssetIndex, candidates: &[String]) -> Vec<String> {
 fn event_priority(event_type: &str) -> usize {
     match event_type {
         "version" => 0,
-        "launch" => 1,
-        "test" => 2,
-        "collab" => 3,
-        "activity" => 4,
-        "controversy" => 5,
+        "season" => 1,
+        "launch" => 2,
+        "test" => 3,
+        "collab" => 4,
+        "activity" => 5,
+        "controversy" => 6,
         _ => 9,
     }
 }

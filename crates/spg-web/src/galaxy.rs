@@ -3,11 +3,11 @@ use crate::models::{
     GalaxyNode, GalaxySummaryView,
 };
 use anyhow::Result;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 
 #[derive(Clone)]
 pub struct GalaxyService {
