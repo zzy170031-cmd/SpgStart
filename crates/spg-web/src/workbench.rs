@@ -7,7 +7,7 @@ use crate::store::{ProviderRuntimeConfig, ProviderStore};
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -26,6 +26,11 @@ use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
 
 const SCHEDULER_TICK_SECS: u64 = 300;
+const DEFAULT_DOUBAO_MODEL: &str = "doubao-seed-2-0-code-preview-260215";
+const DEFAULT_AUTO_REASON_MODE: &str = "off";
+const AUTO_REASON_STAGE_CANDIDATE_REFINE: &str = "candidate_refine";
+const STALE_RUN_TIMEOUT_MINUTES: i64 = 30;
+const STALE_RUN_RECOVERY_ERROR: &str = "stale run recovered before live scheduling";
 
 #[derive(Debug, Clone, Copy)]
 struct SeedGameProfile {
@@ -138,12 +143,93 @@ pub(crate) struct CandidateDraft {
 
 #[derive(Debug, Clone)]
 struct RunExecution {
+    discovered_count: usize,
+    shortlisted_count: usize,
     candidates: Vec<DiscoveredCandidate>,
     breakdowns: Vec<BreakdownCard>,
     content_rankings: Vec<RankingSnapshot>,
     game_rankings: Vec<RankingSnapshot>,
     event_rankings: Vec<RankingSnapshot>,
     usage: Vec<ApiBudgetUsageView>,
+    reasoning: AutoReasonArtifacts,
+}
+
+#[derive(Debug, Clone)]
+struct CandidateVersionArtifact {
+    version_id: String,
+    run_id: String,
+    content_id: String,
+    parent_content_id: String,
+    stage: String,
+    variant_kind: String,
+    source_id: String,
+    title: String,
+    summary: String,
+    url: String,
+    author: String,
+    published_at: String,
+    tags_json: String,
+    topic_tags_json: String,
+    metadata_json: String,
+    created_at: String,
+}
+
+#[derive(Debug, Clone)]
+struct ReasoningJudgementArtifact {
+    decision_id: String,
+    run_id: String,
+    stage: String,
+    content_id: String,
+    candidate_a_version_id: String,
+    candidate_b_version_id: String,
+    candidate_ab_version_id: String,
+    winner_version_id: String,
+    judge_round: i64,
+    judge_model: String,
+    judge_labels_json: String,
+    judge_ranking_json: String,
+    do_nothing: i64,
+    stop_reason: String,
+    confidence: f64,
+    latency_ms: i64,
+    created_at: String,
+}
+
+#[derive(Debug, Clone)]
+struct StageRuntimeMetricArtifact {
+    metric_id: String,
+    run_id: String,
+    stage: String,
+    object_id: String,
+    mode: String,
+    status: String,
+    attempts: i64,
+    latency_ms: i64,
+    provider_usage_json: String,
+    note: String,
+    created_at: String,
+}
+
+#[derive(Debug, Clone, Default)]
+struct AutoReasonArtifacts {
+    candidate_versions: Vec<CandidateVersionArtifact>,
+    reasoning_judgements: Vec<ReasoningJudgementArtifact>,
+    stage_metrics: Vec<StageRuntimeMetricArtifact>,
+}
+
+#[derive(Debug, Clone)]
+struct AutoReasonOutcome {
+    drafts: Vec<CandidateDraft>,
+    artifacts: AutoReasonArtifacts,
+}
+
+#[derive(Debug, Clone)]
+struct ShadowCandidateVariant {
+    kind: String,
+    title: String,
+    summary: String,
+    score: f64,
+    rationale: String,
 }
 
 #[async_trait]
@@ -204,6 +290,59 @@ impl Default for HttpProviderGateway {
     }
 }
 
+#[test]
+fn looks_like_douyin_accepts_share_domains() {
+    let hit = SearchHit {
+        title: "率土之滨 热门视频".to_string(),
+        url: "https://v.douyin.com/abcd1234/".to_string(),
+        snippet: "分享页".to_string(),
+        source_domain: "v.douyin.com".to_string(),
+        author: "测试作者".to_string(),
+        published_at: Some(utc_now()),
+        tags: vec![],
+        engagement_hint: 0.5,
+    };
+
+    assert!(looks_like_douyin(&hit));
+}
+
+#[test]
+fn shortlist_candidates_falls_back_to_recent_douyin_hits() {
+    let settings = WorkbenchSettings {
+        platform: "douyin".to_string(),
+        watchlist_games: vec!["率土之滨".to_string()],
+        keyword_templates: default_seed_keyword_templates(),
+        time_window_hours: 24,
+        schedule_interval_hours: 2,
+        max_candidates_per_run: 10,
+        doubao_model: DEFAULT_DOUBAO_MODEL.to_string(),
+        auto_reason_mode: DEFAULT_AUTO_REASON_MODE.to_string(),
+        auto_reason_stages: vec![AUTO_REASON_STAGE_CANDIDATE_REFINE.to_string()],
+        auto_reason_judge_model: DEFAULT_DOUBAO_MODEL.to_string(),
+        auto_reason_max_rounds: 2,
+        auto_reason_timeout_ms: 12_000,
+        auto_reason_shadow_sample_rate: 0.2,
+        auto_reason_min_confidence: 0.6,
+        auto_reason_do_nothing_margin: 0.05,
+    };
+    let discovery = vec![(
+        "site:douyin.com/video 率土之滨".to_string(),
+        SearchHit {
+            title: "今日热门视频".to_string(),
+            url: "https://v.douyin.com/fallback-hit/".to_string(),
+            snippet: "热门分享入口".to_string(),
+            source_domain: "v.douyin.com".to_string(),
+            author: "测试作者".to_string(),
+            published_at: Some(utc_now()),
+            tags: vec![],
+            engagement_hint: 0.6,
+        },
+    )];
+
+    let shortlist = shortlist_candidates(discovery, &settings);
+    assert_eq!(shortlist.len(), 1);
+    assert_eq!(shortlist[0].1.url, "https://v.douyin.com/fallback-hit/");
+}
 #[async_trait]
 impl ProviderGateway for HttpProviderGateway {
     async fn plan_queries(
@@ -672,12 +811,117 @@ impl WorkbenchService {
                 note TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS candidate_versions (
+                version_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                content_id TEXT NOT NULL,
+                parent_content_id TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                variant_kind TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                url TEXT NOT NULL,
+                author TEXT NOT NULL,
+                published_at TEXT NOT NULL,
+                tags_json TEXT NOT NULL,
+                topic_tags_json TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS reasoning_judgements (
+                decision_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                content_id TEXT NOT NULL,
+                candidate_a_version_id TEXT NOT NULL,
+                candidate_b_version_id TEXT NOT NULL,
+                candidate_ab_version_id TEXT NOT NULL,
+                winner_version_id TEXT NOT NULL,
+                judge_round INTEGER NOT NULL,
+                judge_model TEXT NOT NULL,
+                judge_labels_json TEXT NOT NULL,
+                judge_ranking_json TEXT NOT NULL,
+                do_nothing INTEGER NOT NULL,
+                stop_reason TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                latency_ms INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS stage_runtime_metrics (
+                metric_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                object_id TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL,
+                latency_ms INTEGER NOT NULL,
+                provider_usage_json TEXT NOT NULL,
+                note TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_analysis_runs_started_at ON analysis_runs(started_at DESC);
             CREATE INDEX IF NOT EXISTS idx_content_candidates_run_id ON content_candidates(run_id);
             CREATE INDEX IF NOT EXISTS idx_ranking_snapshots_current ON ranking_snapshots(kind, is_current, rank_value);
             CREATE INDEX IF NOT EXISTS idx_topic_pool_updated_at ON topic_pool(updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_api_budget_usage_provider ON api_budget_usage(provider, recorded_at);
+            CREATE INDEX IF NOT EXISTS idx_candidate_versions_content_stage ON candidate_versions(content_id, stage, variant_kind);
+            CREATE INDEX IF NOT EXISTS idx_reasoning_judgements_run_stage ON reasoning_judgements(run_id, stage, judge_round);
+            CREATE INDEX IF NOT EXISTS idx_stage_runtime_metrics_run_stage ON stage_runtime_metrics(run_id, stage, created_at DESC);
             ",
+        )?;
+
+        ensure_column(
+            &conn,
+            "workbench_settings",
+            "auto_reason_mode",
+            "TEXT NOT NULL DEFAULT 'off'",
+        )?;
+        ensure_column(
+            &conn,
+            "workbench_settings",
+            "auto_reason_stages_json",
+            "TEXT NOT NULL DEFAULT '[\"candidate_refine\"]'",
+        )?;
+        ensure_column(
+            &conn,
+            "workbench_settings",
+            "auto_reason_judge_model",
+            &format!("TEXT NOT NULL DEFAULT '{DEFAULT_DOUBAO_MODEL}'"),
+        )?;
+        ensure_column(
+            &conn,
+            "workbench_settings",
+            "auto_reason_max_rounds",
+            "INTEGER NOT NULL DEFAULT 2",
+        )?;
+        ensure_column(
+            &conn,
+            "workbench_settings",
+            "auto_reason_timeout_ms",
+            "INTEGER NOT NULL DEFAULT 12000",
+        )?;
+        ensure_column(
+            &conn,
+            "workbench_settings",
+            "auto_reason_shadow_sample_rate",
+            "REAL NOT NULL DEFAULT 0.2",
+        )?;
+        ensure_column(
+            &conn,
+            "workbench_settings",
+            "auto_reason_min_confidence",
+            "REAL NOT NULL DEFAULT 0.6",
+        )?;
+        ensure_column(
+            &conn,
+            "workbench_settings",
+            "auto_reason_do_nothing_margin",
+            "REAL NOT NULL DEFAULT 0.05",
         )?;
 
         conn.execute(
@@ -695,10 +939,22 @@ impl WorkbenchService {
                 24_i64,
                 2_i64,
                 50_i64,
-                "",
+                DEFAULT_DOUBAO_MODEL,
                 utc_now(),
             ],
         )?;
+
+        conn.execute(
+            "
+            UPDATE workbench_settings
+            SET doubao_model = ?1,
+                updated_at = ?2
+            WHERE id = 1 AND (TRIM(doubao_model) = '' OR TRIM(doubao_model) = 'primary_reasoner')
+            ",
+            params![DEFAULT_DOUBAO_MODEL, utc_now()],
+        )?;
+
+        self.recover_stale_runs(&conn)?;
 
         Ok(())
     }
@@ -1046,7 +1302,10 @@ impl WorkbenchService {
         let row = conn.query_row(
             "
             SELECT platform, watchlist_games_json, keyword_templates_json, time_window_hours,
-                   schedule_interval_hours, max_candidates_per_run, doubao_model
+                   schedule_interval_hours, max_candidates_per_run, doubao_model,
+                   auto_reason_mode, auto_reason_stages_json, auto_reason_judge_model,
+                   auto_reason_max_rounds, auto_reason_timeout_ms, auto_reason_shadow_sample_rate,
+                   auto_reason_min_confidence, auto_reason_do_nothing_margin
             FROM workbench_settings
             WHERE id = 1
             ",
@@ -1060,6 +1319,14 @@ impl WorkbenchService {
                     row.get::<_, i64>(4)?,
                     row.get::<_, i64>(5)?,
                     row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, i64>(10)?,
+                    row.get::<_, i64>(11)?,
+                    row.get::<_, f64>(12)?,
+                    row.get::<_, f64>(13)?,
+                    row.get::<_, f64>(14)?,
                 ))
             },
         )?;
@@ -1071,6 +1338,14 @@ impl WorkbenchService {
             schedule_interval_hours: row.4,
             max_candidates_per_run: row.5,
             doubao_model: row.6,
+            auto_reason_mode: row.7,
+            auto_reason_stages: from_json_text(row.8)?,
+            auto_reason_judge_model: row.9,
+            auto_reason_max_rounds: row.10,
+            auto_reason_timeout_ms: row.11,
+            auto_reason_shadow_sample_rate: row.12,
+            auto_reason_min_confidence: row.13,
+            auto_reason_do_nothing_margin: row.14,
         }))
     }
 
@@ -1087,7 +1362,15 @@ impl WorkbenchService {
                 schedule_interval_hours = ?5,
                 max_candidates_per_run = ?6,
                 doubao_model = ?7,
-                updated_at = ?8
+                auto_reason_mode = ?8,
+                auto_reason_stages_json = ?9,
+                auto_reason_judge_model = ?10,
+                auto_reason_max_rounds = ?11,
+                auto_reason_timeout_ms = ?12,
+                auto_reason_shadow_sample_rate = ?13,
+                auto_reason_min_confidence = ?14,
+                auto_reason_do_nothing_margin = ?15,
+                updated_at = ?16
             WHERE id = 1
             ",
             params![
@@ -1098,6 +1381,14 @@ impl WorkbenchService {
                 sanitized.schedule_interval_hours,
                 sanitized.max_candidates_per_run,
                 sanitized.doubao_model.trim(),
+                sanitized.auto_reason_mode.trim(),
+                serde_json::to_string(&sanitized.auto_reason_stages)?,
+                sanitized.auto_reason_judge_model.trim(),
+                sanitized.auto_reason_max_rounds,
+                sanitized.auto_reason_timeout_ms,
+                sanitized.auto_reason_shadow_sample_rate,
+                sanitized.auto_reason_min_confidence,
+                sanitized.auto_reason_do_nothing_margin,
                 utc_now(),
             ],
         )?;
@@ -1174,6 +1465,11 @@ impl WorkbenchService {
             .get(&ProviderKind::Firecrawl)
             .map(BudgetMeter::allowed_this_run)
             .unwrap_or(0);
+        let doubao_limit = budget_map
+            .get(&ProviderKind::Doubao)
+            .map(BudgetMeter::allowed_this_run)
+            .unwrap_or(0)
+            .max(1) as usize;
 
         let query_plan = match self
             .gateway
@@ -1184,33 +1480,51 @@ impl WorkbenchService {
             _ => seeded_local_query_plan(&settings),
         };
 
+        let mut raw_discovery: Vec<(String, SearchHit)> = Vec::new();
         let mut discovery: Vec<(String, SearchHit)> = Vec::new();
         for query in query_plan.queries.iter().take(serper_limit as usize) {
             let hits = self.gateway.serper_search(&serper, query).await?;
             self.record_budget_usage(ProviderKind::Serper, run_id, 1, "search", query)?;
-            discovery.extend(
-                hits.into_iter()
-                    .filter(looks_like_douyin)
-                    .map(|item| (query.clone(), item)),
-            );
+            for hit in hits {
+                raw_discovery.push((query.clone(), hit.clone()));
+                if looks_like_douyin(&hit) {
+                    discovery.push((query.clone(), hit));
+                }
+            }
         }
 
-        for query in top_semantic_queries(&discovery, exa_limit as usize) {
+        let exa_seed_pool = if discovery.is_empty() {
+            &raw_discovery
+        } else {
+            &discovery
+        };
+        for query in top_semantic_queries(exa_seed_pool, exa_limit as usize) {
             let hits = self.gateway.exa_expand(&exa, &query).await?;
             self.record_budget_usage(ProviderKind::Exa, run_id, 1, "expand", &query)?;
-            discovery.extend(
-                hits.into_iter()
-                    .filter(looks_like_douyin)
-                    .map(|item| (query.clone(), item)),
-            );
+            for hit in hits {
+                raw_discovery.push((query.clone(), hit.clone()));
+                if looks_like_douyin(&hit) {
+                    discovery.push((query.clone(), hit));
+                }
+            }
         }
 
-        let shortlist = shortlist_candidates(discovery, &settings);
+        if discovery.is_empty() {
+            discovery = fallback_relevant_hits(raw_discovery.clone(), &settings);
+        }
+
+        let mut shortlist = shortlist_candidates(discovery, &settings);
+        if shortlist.is_empty() && !raw_discovery.is_empty() {
+            shortlist = fallback_relevant_hits(raw_discovery.clone(), &settings);
+        }
+        let discovered_count = shortlist.len();
         let mut drafts = shortlist
             .into_iter()
+            .take(doubao_limit)
             .enumerate()
             .map(|(index, (query, hit))| candidate_from_hit(&query, hit, index, &settings))
             .collect::<Vec<_>>();
+        let shortlisted_count = drafts.len();
 
         if drafts.is_empty() {
             bail!("this run did not discover any eligible douyin candidates");
@@ -1256,6 +1570,11 @@ impl WorkbenchService {
                 candidate.metadata["verification_note"] = json!(verification.note);
             }
         }
+
+        let auto_reason = self
+            .auto_reason_candidate_refine(run_id, &settings, drafts)
+            .await?;
+        drafts = auto_reason.drafts;
 
         for candidate in &mut drafts {
             let structured = self
@@ -1401,12 +1720,15 @@ impl WorkbenchService {
         let usage = self.current_budgets()?;
 
         Ok(RunExecution {
+            discovered_count,
+            shortlisted_count,
             content_rankings: build_content_rankings(&candidates),
             game_rankings: build_game_rankings(&candidates),
             event_rankings: build_event_rankings(&candidates),
             candidates,
             breakdowns,
             usage,
+            reasoning: auto_reason.artifacts,
         })
     }
 
@@ -1414,6 +1736,15 @@ impl WorkbenchService {
         let Some(last_run) = self.latest_run()? else {
             return Ok(true);
         };
+        if last_run.status == "running" {
+            return Ok(false);
+        }
+        if last_run.status == "failed"
+            && last_run.error_message.as_deref() == Some(STALE_RUN_RECOVERY_ERROR)
+            && !self.has_current_snapshot()?
+        {
+            return Ok(true);
+        }
         let anchor = last_run
             .finished_at
             .as_deref()
@@ -1455,6 +1786,16 @@ impl WorkbenchService {
             map_analysis_run_row,
         )
         .context("failed to load run by id")
+    }
+
+    fn has_current_snapshot(&self) -> Result<bool> {
+        let conn = self.connect()?;
+        let exists = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM ranking_snapshots WHERE is_current = 1 LIMIT 1)",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        Ok(exists != 0)
     }
 
     fn insert_run(
@@ -1504,6 +1845,8 @@ impl WorkbenchService {
     ) -> Result<()> {
         let mut conn = self.connect()?;
         let tx = conn.transaction()?;
+
+        persist_auto_reason_artifacts(&tx, &result.reasoning)?;
 
         tx.execute(
             "UPDATE ranking_snapshots SET is_current = 0 WHERE is_current = 1",
@@ -1660,8 +2003,8 @@ impl WorkbenchService {
                 run_id,
                 trigger,
                 utc_now(),
-                result.candidates.len() as i64,
-                result.candidates.len() as i64,
+                result.discovered_count as i64,
+                result.shortlisted_count as i64,
                 result.content_rankings.len() as i64,
                 serde_json::to_string(&result.usage)?,
             ],
@@ -1760,6 +2103,42 @@ impl WorkbenchService {
             .with_context(|| format!("failed to open {}", self.db_path.display()))?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         Ok(conn)
+    }
+
+    fn recover_stale_runs(&self, conn: &Connection) -> Result<()> {
+        let cutoff = OffsetDateTime::now_utc() - TimeDuration::minutes(STALE_RUN_TIMEOUT_MINUTES);
+        let mut statement = conn.prepare(
+            "
+            SELECT run_id, started_at
+            FROM analysis_runs
+            WHERE status = 'running'
+            ",
+        )?;
+        let stale_runs = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .filter_map(|(run_id, started_at)| {
+                let started = OffsetDateTime::parse(&started_at, &Rfc3339).ok()?;
+                (started <= cutoff).then_some((run_id, started_at))
+            })
+            .collect::<Vec<_>>();
+
+        for (run_id, _) in stale_runs {
+            conn.execute(
+                "
+                UPDATE analysis_runs
+                SET status = 'failed',
+                    finished_at = ?2,
+                    error_message = ?3
+                WHERE run_id = ?1
+                ",
+                params![run_id, utc_now(), STALE_RUN_RECOVERY_ERROR],
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -1871,16 +2250,63 @@ fn shortlist_candidates(
     settings: &WorkbenchSettings,
 ) -> Vec<(String, SearchHit)> {
     let watch_terms = seed_watch_terms(&settings.watchlist_games);
-    let mut seen = BTreeSet::new();
     let now = OffsetDateTime::now_utc();
-    discovery
+    let limit = settings.max_candidates_per_run.clamp(10, 50) as usize;
+    let mut seen = BTreeSet::new();
+    let recent_hits = discovery
         .into_iter()
         .filter(|(_, hit)| seen.insert(normalized_identity(&hit.url, &hit.title)))
-        .filter(|(_, hit)| looks_slg_relevant(hit, &watch_terms))
         .filter(|(_, hit)| {
             within_time_window(hit.published_at.as_deref(), settings.time_window_hours, now)
         })
-        .take(settings.max_candidates_per_run.clamp(10, 15) as usize)
+        .collect::<Vec<_>>();
+
+    let strict_hits = recent_hits
+        .iter()
+        .filter(|(_, hit)| looks_slg_relevant(hit, &watch_terms))
+        .cloned()
+        .take(limit)
+        .collect::<Vec<_>>();
+    if !strict_hits.is_empty() {
+        return strict_hits;
+    }
+
+    let watchlist_hits = recent_hits
+        .iter()
+        .filter(|(_, hit)| matches_watch_terms(&relevance_haystack(hit), &watch_terms))
+        .cloned()
+        .take(limit)
+        .collect::<Vec<_>>();
+    if !watchlist_hits.is_empty() {
+        return watchlist_hits;
+    }
+
+    recent_hits.into_iter().take(limit).collect()
+}
+
+fn fallback_relevant_hits(
+    discovery: Vec<(String, SearchHit)>,
+    settings: &WorkbenchSettings,
+) -> Vec<(String, SearchHit)> {
+    let watch_terms = seed_watch_terms(&settings.watchlist_games);
+    let now = OffsetDateTime::now_utc();
+    let limit = settings.max_candidates_per_run.clamp(10, 50) as usize;
+    let mut seen = BTreeSet::new();
+
+    discovery
+        .into_iter()
+        .filter(|(_, hit)| seen.insert(normalized_identity(&hit.url, &hit.title)))
+        .filter(|(_, hit)| {
+            within_time_window(hit.published_at.as_deref(), settings.time_window_hours, now)
+        })
+        .filter(|(_, hit)| looks_slg_relevant(hit, &watch_terms))
+        .take(limit)
+        .map(|(query, mut hit)| {
+            if !hit.tags.iter().any(|tag| tag == "fallback_non_douyin") {
+                hit.tags.push("fallback_non_douyin".to_string());
+            }
+            (query, hit)
+        })
         .collect()
 }
 
@@ -1892,6 +2318,8 @@ fn candidate_from_hit(
 ) -> CandidateDraft {
     let published_at = hit.published_at.clone().unwrap_or_else(utc_now);
     let freshness_score = freshness_score(&published_at, settings.time_window_hours);
+    let source_platform_match = looks_like_douyin(&hit);
+    let fallback_non_douyin = hit.tags.iter().any(|tag| tag == "fallback_non_douyin");
     let content_id = format!(
         "content_{}",
         short_hash(&format!("{}:{}", hit.url, hit.title))
@@ -1930,7 +2358,10 @@ fn candidate_from_hit(
             title_directions: Vec::new(),
             topic_pool_reason: String::new(),
         },
-        metadata: json!({}),
+        metadata: json!({
+            "source_platform_match": source_platform_match,
+            "fallback_non_douyin": fallback_non_douyin,
+        }),
     }
 }
 
@@ -2093,10 +2524,10 @@ fn runtime_required(
 #[allow(dead_code)]
 fn default_keyword_templates() -> Vec<String> {
     vec![
-        "SLG 璧涘 鐑偣".to_string(),
-        "SLG 鑱旂洘 瀵规姉".to_string(),
-        "SLG 寮€鑽?闃靛".to_string(),
-        "SLG 娲诲姩 鑱斿姩".to_string(),
+        "SLG 赛季 热点".to_string(),
+        "SLG 联盟 对抗".to_string(),
+        "SLG 开荒 阵容".to_string(),
+        "SLG 活动 联动".to_string(),
     ]
 }
 
@@ -2200,6 +2631,457 @@ fn seed_watch_terms(watchlist: &[String]) -> Vec<String> {
     terms
 }
 
+fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<()> {
+    let mut statement = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if columns.iter().any(|existing| existing == column) {
+        return Ok(());
+    }
+    conn.execute(
+        &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+        [],
+    )?;
+    Ok(())
+}
+
+fn persist_auto_reason_artifacts(
+    tx: &Transaction<'_>,
+    artifacts: &AutoReasonArtifacts,
+) -> Result<()> {
+    for version in &artifacts.candidate_versions {
+        tx.execute(
+            "
+            INSERT INTO candidate_versions(
+                version_id, run_id, content_id, parent_content_id, stage, variant_kind, source_id,
+                title, summary, url, author, published_at, tags_json, topic_tags_json,
+                metadata_json, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            ",
+            params![
+                &version.version_id,
+                &version.run_id,
+                &version.content_id,
+                &version.parent_content_id,
+                &version.stage,
+                &version.variant_kind,
+                &version.source_id,
+                &version.title,
+                &version.summary,
+                &version.url,
+                &version.author,
+                &version.published_at,
+                &version.tags_json,
+                &version.topic_tags_json,
+                &version.metadata_json,
+                &version.created_at,
+            ],
+        )?;
+    }
+
+    for judgement in &artifacts.reasoning_judgements {
+        tx.execute(
+            "
+            INSERT INTO reasoning_judgements(
+                decision_id, run_id, stage, content_id, candidate_a_version_id,
+                candidate_b_version_id, candidate_ab_version_id, winner_version_id,
+                judge_round, judge_model, judge_labels_json, judge_ranking_json,
+                do_nothing, stop_reason, confidence, latency_ms, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            ",
+            params![
+                &judgement.decision_id,
+                &judgement.run_id,
+                &judgement.stage,
+                &judgement.content_id,
+                &judgement.candidate_a_version_id,
+                &judgement.candidate_b_version_id,
+                &judgement.candidate_ab_version_id,
+                &judgement.winner_version_id,
+                judgement.judge_round,
+                &judgement.judge_model,
+                &judgement.judge_labels_json,
+                &judgement.judge_ranking_json,
+                judgement.do_nothing,
+                &judgement.stop_reason,
+                judgement.confidence,
+                judgement.latency_ms,
+                &judgement.created_at,
+            ],
+        )?;
+    }
+
+    for metric in &artifacts.stage_metrics {
+        tx.execute(
+            "
+            INSERT INTO stage_runtime_metrics(
+                metric_id, run_id, stage, object_id, mode, status, attempts, latency_ms,
+                provider_usage_json, note, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            ",
+            params![
+                &metric.metric_id,
+                &metric.run_id,
+                &metric.stage,
+                &metric.object_id,
+                &metric.mode,
+                &metric.status,
+                metric.attempts,
+                metric.latency_ms,
+                &metric.provider_usage_json,
+                &metric.note,
+                &metric.created_at,
+            ],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn candidate_version_artifact(
+    run_id: &str,
+    candidate: &CandidateDraft,
+    variant: &ShadowCandidateVariant,
+    mode: &str,
+) -> Result<CandidateVersionArtifact> {
+    let created_at = utc_now();
+    Ok(CandidateVersionArtifact {
+        version_id: format!(
+            "cv_{}",
+            short_hash(&format!(
+                "{}:{}:{}:{}",
+                run_id, candidate.content_id, variant.kind, candidate.title
+            ))
+        ),
+        run_id: run_id.to_string(),
+        content_id: candidate.content_id.clone(),
+        parent_content_id: candidate.content_id.clone(),
+        stage: AUTO_REASON_STAGE_CANDIDATE_REFINE.to_string(),
+        variant_kind: variant.kind.clone(),
+        source_id: candidate.source_id.clone(),
+        title: variant.title.clone(),
+        summary: variant.summary.clone(),
+        url: candidate.url.clone(),
+        author: candidate.author.clone(),
+        published_at: candidate.published_at.clone(),
+        tags_json: serde_json::to_string(&candidate.tags)?,
+        topic_tags_json: serde_json::to_string(&candidate.topic_tags)?,
+        metadata_json: serde_json::to_string(&json!({
+            "auto_reason": {
+                "mode": mode,
+                "stage": AUTO_REASON_STAGE_CANDIDATE_REFINE,
+                "variant_kind": variant.kind,
+                "score": variant.score,
+                "rationale": variant.rationale,
+            },
+            "candidate_metadata": candidate.metadata,
+        }))?,
+        created_at,
+    })
+}
+
+fn compact_shadow_text(value: &str, limit: usize) -> String {
+    let compact = value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string();
+    if compact.chars().count() <= limit {
+        return compact;
+    }
+    compact.chars().take(limit).collect::<String>().trim().to_string()
+}
+
+fn shadow_base_score(candidate: &CandidateDraft) -> f64 {
+    let weighted = candidate.hotness_score * 0.36
+        + candidate.cross_source_score * 0.22
+        + candidate.freshness_score * 0.16
+        + candidate.engagement_score * 0.16
+        + candidate.doubao_relevance_score * 0.10;
+    weighted.clamp(0.0, 1.0)
+}
+
+fn shadow_candidate_variants(candidate: &CandidateDraft) -> Vec<ShadowCandidateVariant> {
+    let base_score = shadow_base_score(candidate);
+    let verification_note = candidate
+        .metadata
+        .get("verification_note")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let description = candidate.description.trim().to_string();
+    let text_excerpt = compact_shadow_text(&candidate.text, 100);
+    let tag_hint = candidate
+        .tags
+        .iter()
+        .take(3)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" / ");
+    let query_focus = query_word_seed(&candidate.discovery_query, &candidate.title);
+
+    let a_summary = compact_shadow_text(&candidate.summary, 140);
+    let mut b_parts = vec![a_summary.clone()];
+    if !verification_note.is_empty() {
+        b_parts.push(format!("外部验证：{verification_note}"));
+    }
+    if !description.is_empty() {
+        b_parts.push(format!("页面描述：{}", compact_shadow_text(&description, 60)));
+    }
+    let b_summary = compact_shadow_text(&b_parts.join("；"), 180);
+    let b_title = if verification_note.is_empty() {
+        format!("{} | {}热点复核", candidate.title.trim(), query_focus)
+    } else {
+        format!("{} | 已验证热点", candidate.title.trim())
+    };
+
+    let mut ab_parts = vec![a_summary.clone()];
+    if !verification_note.is_empty() {
+        ab_parts.push(format!("验证线索：{verification_note}"));
+    }
+    if !text_excerpt.is_empty() {
+        ab_parts.push(format!("正文摘要：{text_excerpt}"));
+    }
+    if !tag_hint.is_empty() {
+        ab_parts.push(format!("标签：{tag_hint}"));
+    }
+    let ab_summary = compact_shadow_text(&ab_parts.join("；"), 200);
+    let ab_title = if tag_hint.is_empty() {
+        format!("{} | {}整合版", candidate.title.trim(), query_focus)
+    } else {
+        format!("{} | {}整合版", candidate.title.trim(), tag_hint)
+    };
+
+    let b_score = (base_score
+        + if !verification_note.is_empty() { 0.08 } else { 0.03 }
+        + if !description.is_empty() { 0.04 } else { 0.0 })
+        .clamp(0.0, 1.0);
+    let ab_score = (base_score
+        + if !verification_note.is_empty() { 0.06 } else { 0.02 }
+        + if !text_excerpt.is_empty() { 0.05 } else { 0.0 }
+        + if !tag_hint.is_empty() { 0.02 } else { 0.0 })
+        .clamp(0.0, 1.0);
+
+    vec![
+        ShadowCandidateVariant {
+            kind: "A".to_string(),
+            title: candidate.title.trim().to_string(),
+            summary: a_summary,
+            score: base_score,
+            rationale: "保留原始候选，作为当前 incumbent 基线。".to_string(),
+        },
+        ShadowCandidateVariant {
+            kind: "B".to_string(),
+            title: compact_shadow_text(&b_title, 120),
+            summary: b_summary,
+            score: b_score,
+            rationale: "挑战者版本强化了验证信号与页面描述信息。".to_string(),
+        },
+        ShadowCandidateVariant {
+            kind: "AB".to_string(),
+            title: compact_shadow_text(&ab_title, 120),
+            summary: ab_summary,
+            score: ab_score,
+            rationale: "融合版本整合了原摘要、验证线索和正文摘录。".to_string(),
+        },
+    ]
+}
+
+fn stage_runtime_metric_artifact(
+    run_id: &str,
+    object_id: &str,
+    mode: &str,
+    status: &str,
+    note: &str,
+) -> StageRuntimeMetricArtifact {
+    let created_at = utc_now();
+    StageRuntimeMetricArtifact {
+        metric_id: format!(
+            "metric_{}",
+            short_hash(&format!(
+                "{}:{}:{}:{}:{}",
+                run_id,
+                AUTO_REASON_STAGE_CANDIDATE_REFINE,
+                object_id,
+                mode,
+                created_at
+            ))
+        ),
+        run_id: run_id.to_string(),
+        stage: AUTO_REASON_STAGE_CANDIDATE_REFINE.to_string(),
+        object_id: object_id.to_string(),
+        mode: mode.to_string(),
+        status: status.to_string(),
+        attempts: 1,
+        latency_ms: 0,
+        provider_usage_json: "[]".to_string(),
+        note: note.to_string(),
+        created_at,
+    }
+}
+
+fn build_shadow_auto_reason_artifacts(
+    run_id: &str,
+    settings: &WorkbenchSettings,
+    drafts: &[CandidateDraft],
+) -> Result<AutoReasonArtifacts> {
+    let mode = normalize_auto_reason_mode(&settings.auto_reason_mode);
+    let mut artifacts = AutoReasonArtifacts::default();
+
+    for candidate in drafts {
+        let variants = shadow_candidate_variants(candidate);
+        let baseline_score = variants
+            .iter()
+            .find(|variant| variant.kind == "A")
+            .map(|variant| variant.score)
+            .unwrap_or(0.0);
+        let mut ranked_variants = variants.clone();
+        ranked_variants.sort_by(|left, right| {
+            right
+                .score
+                .partial_cmp(&left.score)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| left.kind.cmp(&right.kind))
+        });
+        let top_variant = ranked_variants
+            .first()
+            .cloned()
+            .unwrap_or_else(|| ShadowCandidateVariant {
+                kind: "A".to_string(),
+                title: candidate.title.clone(),
+                summary: candidate.summary.clone(),
+                score: baseline_score,
+                rationale: "Fallback to incumbent baseline.".to_string(),
+            });
+        let retain_baseline =
+            top_variant.kind == "A"
+                || (top_variant.score - baseline_score) <= settings.auto_reason_do_nothing_margin;
+        let winning_kind = if retain_baseline {
+            "A".to_string()
+        } else {
+            top_variant.kind.clone()
+        };
+        let ranked_labels = ranked_variants
+            .iter()
+            .map(|variant| variant.kind.clone())
+            .collect::<Vec<_>>();
+        let mut version_records = variants
+            .iter()
+            .map(|variant| candidate_version_artifact(run_id, candidate, variant, &mode))
+            .collect::<Result<Vec<_>>>()?;
+        let winner_record = version_records
+            .iter()
+            .find(|record| record.variant_kind == winning_kind)
+            .cloned()
+            .unwrap_or_else(|| version_records[0].clone());
+        let created_at = utc_now();
+
+        artifacts.candidate_versions.append(&mut version_records);
+        artifacts.reasoning_judgements.push(ReasoningJudgementArtifact {
+            decision_id: format!(
+                "judge_{}",
+                short_hash(&format!("{}:{}:{}", run_id, candidate.content_id, mode))
+            ),
+            run_id: run_id.to_string(),
+            stage: AUTO_REASON_STAGE_CANDIDATE_REFINE.to_string(),
+            content_id: candidate.content_id.clone(),
+            candidate_a_version_id: artifacts
+                .candidate_versions
+                .iter()
+                .rev()
+                .find(|record| {
+                    record.content_id == candidate.content_id && record.variant_kind == "A"
+                })
+                .map(|record| record.version_id.clone())
+                .unwrap_or_else(|| winner_record.version_id.clone()),
+            candidate_b_version_id: artifacts
+                .candidate_versions
+                .iter()
+                .rev()
+                .find(|record| {
+                    record.content_id == candidate.content_id && record.variant_kind == "B"
+                })
+                .map(|record| record.version_id.clone())
+                .unwrap_or_else(|| winner_record.version_id.clone()),
+            candidate_ab_version_id: artifacts
+                .candidate_versions
+                .iter()
+                .rev()
+                .find(|record| {
+                    record.content_id == candidate.content_id && record.variant_kind == "AB"
+                })
+                .map(|record| record.version_id.clone())
+                .unwrap_or_else(|| winner_record.version_id.clone()),
+            winner_version_id: winner_record.version_id.clone(),
+            judge_round: 1,
+            judge_model: settings.auto_reason_judge_model.clone(),
+            judge_labels_json: serde_json::to_string(&vec![
+                "A",
+                "B",
+                "AB",
+                "do_nothing",
+            ])?,
+            judge_ranking_json: serde_json::to_string(&ranked_labels)?,
+            do_nothing: if retain_baseline { 1 } else { 0 },
+            stop_reason: if retain_baseline {
+                "no_improvement".to_string()
+            } else {
+                format!("shadow_select_{}", winning_kind.to_ascii_lowercase())
+            },
+            confidence: (top_variant.score - baseline_score).max(0.0),
+            latency_ms: 0,
+            created_at: created_at.clone(),
+        });
+        artifacts.stage_metrics.push(stage_runtime_metric_artifact(
+            run_id,
+            &candidate.content_id,
+            &mode,
+            "shadow_recorded",
+            &format!(
+                "Shadow ranked {:?}; chosen {} for analysis only; baseline candidate continues downstream.",
+                ranked_labels, winning_kind
+            ),
+        ));
+    }
+
+    if drafts.is_empty() {
+        artifacts.stage_metrics.push(stage_runtime_metric_artifact(
+            run_id,
+            run_id,
+            &mode,
+            "shadow_skipped",
+            "No candidate drafts available for AutoReason shadow recording.",
+        ));
+    }
+
+    Ok(artifacts)
+}
+
+fn normalize_auto_reason_mode(mode: &str) -> String {
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "shadow" => "shadow".to_string(),
+        "enabled" => "enabled".to_string(),
+        _ => DEFAULT_AUTO_REASON_MODE.to_string(),
+    }
+}
+
+fn sanitize_auto_reason_stages(stages: Vec<String>) -> Vec<String> {
+    let mut cleaned = stages
+        .into_iter()
+        .map(|item| item.trim().to_ascii_lowercase())
+        .filter(|item| item == AUTO_REASON_STAGE_CANDIDATE_REFINE)
+        .collect::<Vec<_>>();
+    cleaned.sort();
+    cleaned.dedup();
+    if cleaned.is_empty() {
+        cleaned.push(AUTO_REASON_STAGE_CANDIDATE_REFINE.to_string());
+    }
+    cleaned
+}
+
 fn sanitize_settings(mut settings: WorkbenchSettings) -> WorkbenchSettings {
     settings.platform = if settings.platform.trim().is_empty() {
         "douyin".to_string()
@@ -2227,8 +3109,47 @@ fn sanitize_settings(mut settings: WorkbenchSettings) -> WorkbenchSettings {
     settings.time_window_hours = settings.time_window_hours.clamp(6, 168);
     settings.schedule_interval_hours = settings.schedule_interval_hours.clamp(1, 24);
     settings.max_candidates_per_run = settings.max_candidates_per_run.clamp(10, 50);
-    settings.doubao_model = settings.doubao_model.trim().to_string();
+    settings.doubao_model = if settings.doubao_model.trim().is_empty() {
+        DEFAULT_DOUBAO_MODEL.to_string()
+    } else {
+        settings.doubao_model.trim().to_string()
+    };
+    settings.auto_reason_mode = normalize_auto_reason_mode(&settings.auto_reason_mode);
+    settings.auto_reason_stages = sanitize_auto_reason_stages(settings.auto_reason_stages);
+    settings.auto_reason_judge_model = if settings.auto_reason_judge_model.trim().is_empty() {
+        DEFAULT_DOUBAO_MODEL.to_string()
+    } else {
+        settings.auto_reason_judge_model.trim().to_string()
+    };
+    settings.auto_reason_max_rounds = settings.auto_reason_max_rounds.clamp(1, 4);
+    settings.auto_reason_timeout_ms = settings.auto_reason_timeout_ms.clamp(1_000, 60_000);
+    settings.auto_reason_shadow_sample_rate =
+        settings.auto_reason_shadow_sample_rate.clamp(0.0, 1.0);
+    settings.auto_reason_min_confidence = settings.auto_reason_min_confidence.clamp(0.0, 1.0);
+    settings.auto_reason_do_nothing_margin =
+        settings.auto_reason_do_nothing_margin.clamp(0.0, 1.0);
     settings
+}
+
+impl WorkbenchService {
+    async fn auto_reason_candidate_refine(
+        &self,
+        run_id: &str,
+        settings: &WorkbenchSettings,
+        drafts: Vec<CandidateDraft>,
+    ) -> Result<AutoReasonOutcome> {
+        let mode = normalize_auto_reason_mode(&settings.auto_reason_mode);
+        if mode == DEFAULT_AUTO_REASON_MODE {
+            return Ok(AutoReasonOutcome {
+                drafts,
+                artifacts: AutoReasonArtifacts::default(),
+            });
+        }
+        Ok(AutoReasonOutcome {
+            artifacts: build_shadow_auto_reason_artifacts(run_id, settings, &drafts)?,
+            drafts,
+        })
+    }
 }
 
 #[allow(dead_code)]
@@ -2240,11 +3161,11 @@ fn local_query_plan(settings: &WorkbenchSettings) -> QueryPlan {
     };
     let mut queries = Vec::new();
     for game in watchlist.iter().take(3) {
-        queries.push(format!("site:douyin.com/video {game} 鐗堟湰 璧涘"));
-        queries.push(format!("site:douyin.com/video {game} 娲诲姩 鑱斿姩"));
-        queries.push(format!("site:douyin.com/video {game} 闃靛 寮€鑽?涓婂垎"));
+        queries.push(format!("site:douyin.com/video {game} 版本 赛季"));
+        queries.push(format!("site:douyin.com/video {game} 活动 联动"));
+        queries.push(format!("site:douyin.com/video {game} 阵容 开荒 上分"));
     }
-    queries.push("site:douyin.com/video SLG 鐑棬 璧涘".to_string());
+    queries.push("site:douyin.com/video SLG 热门 赛季".to_string());
     QueryPlan { queries }
 }
 
@@ -2297,25 +3218,44 @@ fn query_word_seed(query: &str, title: &str) -> String {
 }
 
 fn looks_like_douyin(item: &SearchHit) -> bool {
-    let url = item.url.to_ascii_lowercase();
-    url.contains("douyin.com") || item.source_domain.contains("douyin.com")
+    let haystack = format!(
+        "{} {}",
+        item.url.to_ascii_lowercase(),
+        item.source_domain.to_ascii_lowercase()
+    );
+    ["douyin.com", "v.douyin.com", "iesdouyin.com", "douyin"]
+        .iter()
+        .any(|needle| haystack.contains(needle))
+}
+
+fn relevance_haystack(hit: &SearchHit) -> String {
+    format!(
+        "{} {} {} {} {}",
+        hit.title.to_lowercase(),
+        hit.snippet.to_lowercase(),
+        hit.tags.join(" ").to_lowercase(),
+        hit.author.to_lowercase(),
+        hit.source_domain.to_lowercase()
+    )
+}
+
+fn matches_watch_terms(haystack: &str, watchlist: &[String]) -> bool {
+    watchlist
+        .iter()
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+        .any(|item| haystack.contains(item))
 }
 
 fn looks_slg_relevant(hit: &SearchHit, watchlist: &[String]) -> bool {
-    let haystack = format!(
-        "{} {}",
-        hit.title.to_ascii_lowercase(),
-        hit.snippet.to_ascii_lowercase()
-    );
-    if haystack.contains("slg")
-        || haystack.contains("赛季")
-        || haystack.contains("开荒")
-        || haystack.contains("联盟")
-        || haystack.contains("同盟")
-    {
-        return true;
-    }
-    watchlist.iter().any(|item| haystack.contains(item))
+    let haystack = relevance_haystack(hit);
+    let generic_terms = [
+        "slg", "赛季", "开荒", "联盟", "同盟", "配将", "阵容", "国战", "活动", "联动", "版本",
+        "攻略", "配队", "养成", "抽卡", "战报", "热点",
+    ];
+
+    generic_terms.iter().any(|term| haystack.contains(term))
+        || matches_watch_terms(&haystack, watchlist)
 }
 
 fn normalized_identity(url: &str, title: &str) -> String {
@@ -2398,16 +3338,100 @@ fn domain_for_url(url: &str) -> String {
 
 fn extract_json_value(content: &str) -> Result<Value> {
     let trimmed = content.trim();
-    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-        return Ok(value);
+    let mut candidates = Vec::new();
+    candidates.push(trimmed.to_string());
+    if let Some(fenced) = extract_fenced_block(trimmed) {
+        candidates.push(fenced.to_string());
     }
-    if let Some(start) = trimmed.find('{') {
-        if let Some(end) = trimmed.rfind('}') {
-            return serde_json::from_str(&trimmed[start..=end])
-                .context("failed to parse json object from model output");
+    candidates.extend(balanced_json_candidates(trimmed));
+    if let Some(fenced) = extract_fenced_block(trimmed) {
+        candidates.extend(balanced_json_candidates(fenced));
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut last_error = None;
+    for candidate in candidates {
+        let normalized = candidate.trim();
+        if normalized.is_empty() || !seen.insert(normalized.to_string()) {
+            continue;
+        }
+        match serde_json::from_str::<Value>(normalized) {
+            Ok(value) => return Ok(value),
+            Err(error) => last_error = Some(error),
         }
     }
+
+    if let Some(error) = last_error {
+        return Err(error).context("failed to parse json object from model output");
+    }
     bail!("model output did not contain valid json")
+}
+
+fn extract_fenced_block(content: &str) -> Option<&str> {
+    let start = content.find("```")?;
+    let after_start = &content[start + 3..];
+    let line_break = after_start.find('\n')?;
+    let body = &after_start[line_break + 1..];
+    let end = body.rfind("```")?;
+    Some(body[..end].trim())
+}
+
+fn balanced_json_candidates(content: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+    for (index, ch) in content.char_indices() {
+        if ch != '{' && ch != '[' {
+            continue;
+        }
+        if let Some(len) = balanced_json_len(&content[index..]) {
+            candidates.push(content[index..index + len].trim().to_string());
+        }
+    }
+    candidates
+}
+
+fn balanced_json_len(content: &str) -> Option<usize> {
+    let mut stack = Vec::new();
+    let mut in_string = false;
+    let mut escape = false;
+
+    for (index, ch) in content.char_indices() {
+        if in_string {
+            if escape {
+                escape = false;
+                continue;
+            }
+            match ch {
+                '\\' => escape = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' | '[' => stack.push(ch),
+            '}' => {
+                if stack.pop() != Some('{') {
+                    return None;
+                }
+                if stack.is_empty() {
+                    return Some(index + ch.len_utf8());
+                }
+            }
+            ']' => {
+                if stack.pop() != Some('[') {
+                    return None;
+                }
+                if stack.is_empty() {
+                    return Some(index + ch.len_utf8());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
 }
 
 fn utc_now() -> String {
@@ -2587,6 +3611,14 @@ mod tests {
             schedule_interval_hours: 2,
             max_candidates_per_run: 12,
             doubao_model: "ep-test-doubao".to_string(),
+            auto_reason_mode: DEFAULT_AUTO_REASON_MODE.to_string(),
+            auto_reason_stages: vec![AUTO_REASON_STAGE_CANDIDATE_REFINE.to_string()],
+            auto_reason_judge_model: "ep-test-doubao".to_string(),
+            auto_reason_max_rounds: 2,
+            auto_reason_timeout_ms: 12_000,
+            auto_reason_shadow_sample_rate: 0.2,
+            auto_reason_min_confidence: 0.6,
+            auto_reason_do_nothing_margin: 0.05,
         })?;
         Ok(service)
     }
@@ -2607,6 +3639,91 @@ mod tests {
             .expect("content")
             .expect("existing content");
         assert!(content.breakdown.content_summary.contains("结构化总结"));
+    }
+
+    #[tokio::test]
+    async fn shadow_mode_records_auto_reason_artifacts_without_changing_outputs() {
+        let service = build_test_service(false).expect("service");
+        let mut settings = service.settings().expect("settings");
+        settings.auto_reason_mode = "shadow".to_string();
+        service
+            .update_settings(settings)
+            .expect("update settings with shadow");
+
+        let run = service.run_now().await.expect("shadow run");
+        assert_eq!(run.status, "succeeded");
+
+        let conn = service.connect().expect("connect");
+        let candidate_versions: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM candidate_versions WHERE run_id = ?1",
+                params![&run.run_id],
+                |row| row.get(0),
+            )
+            .expect("candidate version count");
+        let judgements: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM reasoning_judgements WHERE run_id = ?1",
+                params![&run.run_id],
+                |row| row.get(0),
+            )
+            .expect("judgement count");
+        let metrics: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM stage_runtime_metrics WHERE run_id = ?1 AND stage = ?2",
+                params![&run.run_id, AUTO_REASON_STAGE_CANDIDATE_REFINE],
+                |row| row.get(0),
+            )
+            .expect("metric count");
+        let content_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM content_candidates WHERE run_id = ?1",
+                params![&run.run_id],
+                |row| row.get(0),
+            )
+            .expect("content count");
+        let distinct_variants: i64 = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT variant_kind) FROM candidate_versions WHERE run_id = ?1",
+                params![&run.run_id],
+                |row| row.get(0),
+            )
+            .expect("distinct variants");
+
+        assert!(candidate_versions > 0);
+        assert!(candidate_versions >= judgements * 3);
+        assert!(judgements > 0);
+        assert!(metrics > 0);
+        assert!(content_rows > 0);
+        assert!(distinct_variants >= 3);
+    }
+
+    #[test]
+    fn extract_json_value_accepts_markdown_code_fence() {
+        let content = "Here is the result:\n```json\n{\"queries\":[\"a\",\"b\"]}\n```";
+        let value = extract_json_value(content).expect("extract fenced json");
+        assert_eq!(
+            value["queries"]
+                .as_array()
+                .expect("queries array")
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn extract_json_value_accepts_surrounding_text() {
+        let content = "analysis first\n{\"game_name\":\"率土之滨\",\"topic_tags\":[\"赛季\"]}\nthanks";
+        let value = extract_json_value(content).expect("extract surrounded json");
+        assert_eq!(value["game_name"], "率土之滨");
+    }
+
+    #[test]
+    fn extract_json_value_skips_non_json_braces_before_payload() {
+        let content =
+            "note: use {placeholder} only for explanation\n{\"topic_pool_reason\":\"valid payload\"}";
+        let value = extract_json_value(content).expect("extract trailing payload");
+        assert_eq!(value["topic_pool_reason"], "valid payload");
     }
 
     #[tokio::test]
@@ -2712,6 +3829,14 @@ mod tests {
             schedule_interval_hours: 99,
             max_candidates_per_run: 2,
             doubao_model: "  ".to_string(),
+            auto_reason_mode: " ??? ".to_string(),
+            auto_reason_stages: vec!["candidate_refine".to_string(), "other".to_string()],
+            auto_reason_judge_model: " ".to_string(),
+            auto_reason_max_rounds: 99,
+            auto_reason_timeout_ms: 99,
+            auto_reason_shadow_sample_rate: 2.0,
+            auto_reason_min_confidence: -1.0,
+            auto_reason_do_nothing_margin: 2.0,
         });
         assert_eq!(settings.platform, "douyin");
         assert_eq!(settings.watchlist_games, default_watchlist_games());
@@ -2719,6 +3844,137 @@ mod tests {
         assert_eq!(settings.time_window_hours, 6);
         assert_eq!(settings.schedule_interval_hours, 24);
         assert_eq!(settings.max_candidates_per_run, 10);
+        assert_eq!(settings.doubao_model, DEFAULT_DOUBAO_MODEL);
+        assert_eq!(settings.auto_reason_mode, DEFAULT_AUTO_REASON_MODE);
+        assert_eq!(
+            settings.auto_reason_stages,
+            vec![AUTO_REASON_STAGE_CANDIDATE_REFINE.to_string()]
+        );
+        assert_eq!(settings.auto_reason_judge_model, DEFAULT_DOUBAO_MODEL);
+        assert_eq!(settings.auto_reason_max_rounds, 4);
+        assert_eq!(settings.auto_reason_timeout_ms, 1_000);
+        assert_eq!(settings.auto_reason_shadow_sample_rate, 1.0);
+        assert_eq!(settings.auto_reason_min_confidence, 0.0);
+        assert_eq!(settings.auto_reason_do_nothing_margin, 1.0);
+    }
+
+    #[test]
+    fn shortlist_candidates_respects_configured_cap_above_fifteen() {
+        let settings = WorkbenchSettings {
+            platform: "douyin".to_string(),
+            watchlist_games: vec!["率土之滨".to_string()],
+            keyword_templates: default_seed_keyword_templates(),
+            time_window_hours: 24,
+            schedule_interval_hours: 2,
+            max_candidates_per_run: 20,
+            doubao_model: DEFAULT_DOUBAO_MODEL.to_string(),
+            auto_reason_mode: DEFAULT_AUTO_REASON_MODE.to_string(),
+            auto_reason_stages: vec![AUTO_REASON_STAGE_CANDIDATE_REFINE.to_string()],
+            auto_reason_judge_model: DEFAULT_DOUBAO_MODEL.to_string(),
+            auto_reason_max_rounds: 2,
+            auto_reason_timeout_ms: 12_000,
+            auto_reason_shadow_sample_rate: 0.2,
+            auto_reason_min_confidence: 0.6,
+            auto_reason_do_nothing_margin: 0.05,
+        };
+        let discovery = (0..24)
+            .map(|index| {
+                (
+                    "site:douyin.com/video 率土之滨 赛季".to_string(),
+                    SearchHit {
+                        title: format!("率土之滨 赛季热点 {index}"),
+                        url: format!("https://www.douyin.com/video/candidate-{index}"),
+                        snippet: "率土之滨 赛季 开荒 同盟".to_string(),
+                        source_domain: "www.douyin.com".to_string(),
+                        author: "测试作者".to_string(),
+                        published_at: Some(utc_now()),
+                        tags: vec!["slg".to_string()],
+                        engagement_hint: 0.8,
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let shortlist = shortlist_candidates(discovery, &settings);
+        assert_eq!(shortlist.len(), 20);
+    }
+
+    #[test]
+    fn fallback_relevant_hits_keep_non_douyin_results_when_relevant() {
+        let settings = WorkbenchSettings {
+            platform: "douyin".to_string(),
+            watchlist_games: vec!["率土之滨".to_string()],
+            keyword_templates: default_seed_keyword_templates(),
+            time_window_hours: 24,
+            schedule_interval_hours: 2,
+            max_candidates_per_run: 20,
+            doubao_model: DEFAULT_DOUBAO_MODEL.to_string(),
+            auto_reason_mode: DEFAULT_AUTO_REASON_MODE.to_string(),
+            auto_reason_stages: vec![AUTO_REASON_STAGE_CANDIDATE_REFINE.to_string()],
+            auto_reason_judge_model: DEFAULT_DOUBAO_MODEL.to_string(),
+            auto_reason_max_rounds: 2,
+            auto_reason_timeout_ms: 12_000,
+            auto_reason_shadow_sample_rate: 0.2,
+            auto_reason_min_confidence: 0.6,
+            auto_reason_do_nothing_margin: 0.05,
+        };
+
+        let discovery = vec![(
+            "率土之滨 S32赛季开荒配将 24小时热点".to_string(),
+            SearchHit {
+                title: "率土之滨 S32赛季开荒阵容汇总".to_string(),
+                url: "https://www.gamersky.com/news/202604/123456.shtml".to_string(),
+                snippet: "率土之滨 S32 赛季开荒配将与阵容热点盘点".to_string(),
+                source_domain: "www.gamersky.com".to_string(),
+                author: "游民星空".to_string(),
+                published_at: Some(utc_now()),
+                tags: vec!["serper".to_string()],
+                engagement_hint: 0.72,
+            },
+        )];
+
+        let hits = fallback_relevant_hits(discovery, &settings);
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0]
+            .1
+            .tags
+            .iter()
+            .any(|tag| tag == "fallback_non_douyin"));
+    }
+
+    #[test]
+    fn stale_running_run_is_recovered_on_service_init() {
+        let service = build_test_service(false).expect("service");
+        let started_at = (OffsetDateTime::now_utc()
+            - TimeDuration::minutes(STALE_RUN_TIMEOUT_MINUTES + 5))
+        .format(&Rfc3339)
+        .expect("timestamp");
+        service
+            .insert_run("stale_run", "schedule", "running", &started_at)
+            .expect("insert stale run");
+
+        let reopened = WorkbenchService::new(
+            service.db_path.clone(),
+            service.provider_store.clone(),
+            Arc::new(MockGateway {
+                invalid_json: false,
+            }),
+        )
+        .expect("reopen service");
+
+        let latest = reopened
+            .latest_run()
+            .expect("latest run")
+            .expect("stale run exists");
+        assert_eq!(latest.run_id, "stale_run");
+        assert_eq!(latest.status, "failed");
+        assert_eq!(
+            latest.error_message.as_deref(),
+            Some(STALE_RUN_RECOVERY_ERROR)
+        );
+        assert!(reopened
+            .should_run(&reopened.settings().expect("settings"))
+            .expect("should run"));
     }
 
     #[test]
@@ -2731,6 +3987,14 @@ mod tests {
             schedule_interval_hours: 2,
             max_candidates_per_run: 12,
             doubao_model: "ep-test-doubao".to_string(),
+            auto_reason_mode: DEFAULT_AUTO_REASON_MODE.to_string(),
+            auto_reason_stages: vec![AUTO_REASON_STAGE_CANDIDATE_REFINE.to_string()],
+            auto_reason_judge_model: "ep-test-doubao".to_string(),
+            auto_reason_max_rounds: 2,
+            auto_reason_timeout_ms: 12_000,
+            auto_reason_shadow_sample_rate: 0.2,
+            auto_reason_min_confidence: 0.6,
+            auto_reason_do_nothing_margin: 0.05,
         };
         let plan = seeded_local_query_plan(&settings);
         assert_eq!(plan.queries.len(), 8);

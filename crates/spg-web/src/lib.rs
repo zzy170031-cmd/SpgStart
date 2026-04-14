@@ -4,10 +4,13 @@ pub mod secret_store;
 pub mod store;
 pub mod ui;
 pub mod ui_desktop;
+pub mod ui_desktop_clean;
+pub mod ui_desktop_v4;
 pub mod ui_shell;
 pub mod ui_v2;
 pub mod ui_workbench;
 pub mod ui_workbench_v2;
+pub mod ui_workbench_v3;
 pub mod workbench;
 
 use crate::galaxy::{core_db_path, GalaxyService};
@@ -18,9 +21,9 @@ use crate::models::{
 };
 use crate::secret_store::{HybridSecretStore, SecretStore};
 use crate::store::{provider_db_path, ProviderStore};
-use crate::ui_desktop::render_desktop_launcher_page;
+use crate::ui_desktop_v4::render_desktop_launcher_page;
 use crate::ui_shell::{render_login_page, render_setup_page};
-use crate::ui_workbench_v2::render_workbench_page;
+use crate::ui_workbench_v3::render_workbench_page;
 use crate::workbench::{HttpProviderGateway, RankingQuery, WorkbenchService};
 use anyhow::{Context, Result};
 use axum::extract::{Path as RoutePath, Query, State};

@@ -1,10 +1,14 @@
 target/
+target-*/
 .cargo-target-webThGgZn/
 recovery/
 
 data/*.log
 data/*.db
+data/*.db-shm
+data/*.db-wal
 data/*.db.bak_*
+data/spg_desktop_state.json
 data/.spg_web_provider_secrets.enc
 data/.spg_web_provider_secrets.enc.bak_*
 

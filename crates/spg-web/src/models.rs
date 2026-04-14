@@ -1,5 +1,37 @@
 use serde::{Deserialize, Serialize};
 
+fn default_auto_reason_mode() -> String {
+    "off".to_string()
+}
+
+fn default_auto_reason_stages() -> Vec<String> {
+    vec!["candidate_refine".to_string()]
+}
+
+fn default_auto_reason_judge_model() -> String {
+    "doubao-seed-2-0-code-preview-260215".to_string()
+}
+
+fn default_auto_reason_max_rounds() -> i64 {
+    2
+}
+
+fn default_auto_reason_timeout_ms() -> i64 {
+    12_000
+}
+
+fn default_auto_reason_shadow_sample_rate() -> f64 {
+    0.2
+}
+
+fn default_auto_reason_min_confidence() -> f64 {
+    0.6
+}
+
+fn default_auto_reason_do_nothing_margin() -> f64 {
+    0.05
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
@@ -333,6 +365,22 @@ pub struct WorkbenchSettings {
     pub schedule_interval_hours: i64,
     pub max_candidates_per_run: i64,
     pub doubao_model: String,
+    #[serde(default = "default_auto_reason_mode")]
+    pub auto_reason_mode: String,
+    #[serde(default = "default_auto_reason_stages")]
+    pub auto_reason_stages: Vec<String>,
+    #[serde(default = "default_auto_reason_judge_model")]
+    pub auto_reason_judge_model: String,
+    #[serde(default = "default_auto_reason_max_rounds")]
+    pub auto_reason_max_rounds: i64,
+    #[serde(default = "default_auto_reason_timeout_ms")]
+    pub auto_reason_timeout_ms: i64,
+    #[serde(default = "default_auto_reason_shadow_sample_rate")]
+    pub auto_reason_shadow_sample_rate: f64,
+    #[serde(default = "default_auto_reason_min_confidence")]
+    pub auto_reason_min_confidence: f64,
+    #[serde(default = "default_auto_reason_do_nothing_margin")]
+    pub auto_reason_do_nothing_margin: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
