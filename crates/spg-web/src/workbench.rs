@@ -1,6 +1,6 @@
 use crate::models::{
-    AnalysisRun, ApiBudgetUsageView, BreakdownCard, DiscoveredCandidate, ProviderKind,
-    RankingSnapshot, TopicPoolCreateRequest, TopicPoolItem, WorkbenchContentView,
+    AnalysisRun, ApiBudgetUsageView, BreakdownCard, ContentTrustView, DiscoveredCandidate,
+    ProviderKind, RankingSnapshot, TopicPoolCreateRequest, TopicPoolItem, WorkbenchContentView,
     WorkbenchOverview, WorkbenchSettings,
 };
 use crate::store::{ProviderRuntimeConfig, ProviderStore};
@@ -139,6 +139,29 @@ pub(crate) struct CandidateDraft {
     topic_tags: Vec<String>,
     breakdown: BreakdownCard,
     metadata: Value,
+}
+
+fn trust_from_metadata_value(metadata: &Value, captured_at: String) -> ContentTrustView {
+    ContentTrustView {
+        source_platform_match: metadata
+            .get("source_platform_match")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        fallback_non_douyin: metadata
+            .get("fallback_non_douyin")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        verification_note: metadata
+            .get("verification_note")
+            .and_then(Value::as_str)
+            .map(|value| value.to_string()),
+        captured_at,
+    }
+}
+
+fn trust_from_metadata_json(metadata_json: &str, captured_at: String) -> ContentTrustView {
+    let metadata = serde_json::from_str::<Value>(metadata_json).unwrap_or(Value::Null);
+    trust_from_metadata_value(&metadata, captured_at)
 }
 
 #[derive(Debug, Clone)]
@@ -1037,9 +1060,12 @@ impl WorkbenchService {
         let conn = self.connect()?;
         let mut statement = conn.prepare(
             "
-            SELECT entity_id, content_id, title, subtitle, score, rank_value, game_id, event_type
-            FROM ranking_snapshots
-            WHERE kind = ?1 AND is_current = 1
+            SELECT rs.entity_id, rs.content_id, rs.title, rs.subtitle, rs.score, rs.rank_value,
+                   rs.game_id, rs.event_type, cc.platform, cc.author, cc.published_at,
+                   cc.source_domain, cc.url, cc.metadata_json, cc.created_at
+            FROM ranking_snapshots rs
+            LEFT JOIN content_candidates cc ON cc.content_id = rs.content_id
+            WHERE rs.kind = ?1 AND rs.is_current = 1
             ORDER BY rank_value ASC
             ",
         )?;
@@ -1057,6 +1083,20 @@ impl WorkbenchService {
                 rank: row.get(5)?,
                 game_id: row.get(6)?,
                 event_type: row.get(7)?,
+                platform: row.get(8)?,
+                author: row.get(9)?,
+                published_at: row.get(10)?,
+                source_domain: row.get(11)?,
+                source_url: row.get(12)?,
+                trust: match (
+                    row.get::<_, Option<String>>(13)?,
+                    row.get::<_, Option<String>>(14)?,
+                ) {
+                    (Some(metadata_json), Some(created_at)) => {
+                        Some(trust_from_metadata_json(&metadata_json, created_at))
+                    }
+                    _ => None,
+                },
             };
             if let Some(game_id) = query.game_id.as_deref() {
                 if item.game_id.as_deref() != Some(game_id) {
@@ -1095,7 +1135,7 @@ impl WorkbenchService {
                 SELECT source_id, title, summary, url, platform, author, published_at, source_domain,
                        discovery_query, tags_json, game_id, game_name, event_type, topic_tags_json,
                        engagement_score, freshness_score, cross_source_score, doubao_relevance_score,
-                       hotness_score
+                       hotness_score, metadata_json, created_at
                 FROM content_candidates
                 WHERE content_id = ?1
                 ",
@@ -1121,6 +1161,8 @@ impl WorkbenchService {
                         row.get::<_, f64>(16)?,
                         row.get::<_, f64>(17)?,
                         row.get::<_, f64>(18)?,
+                        row.get::<_, String>(19)?,
+                        row.get::<_, String>(20)?,
                     ))
                 },
             )
@@ -1150,6 +1192,7 @@ impl WorkbenchService {
             cross_source_score: candidate_row.16,
             doubao_relevance_score: candidate_row.17,
             hotness_score: candidate_row.18,
+            trust: trust_from_metadata_json(&candidate_row.19, candidate_row.20),
         };
 
         let breakdown_row = conn.query_row(
@@ -1710,6 +1753,7 @@ impl WorkbenchService {
                 cross_source_score: candidate.cross_source_score,
                 doubao_relevance_score: candidate.doubao_relevance_score,
                 hotness_score: candidate.hotness_score,
+                trust: trust_from_metadata_value(&candidate.metadata, utc_now()),
             })
             .collect::<Vec<_>>();
 
@@ -1911,7 +1955,7 @@ impl WorkbenchService {
                     candidate.cross_source_score,
                     candidate.doubao_relevance_score,
                     candidate.hotness_score,
-                    "{}",
+                    serde_json::to_string(&candidate.trust)?,
                     utc_now(),
                 ],
             )?;
@@ -2388,6 +2432,12 @@ fn build_content_rankings(candidates: &[DiscoveredCandidate]) -> Vec<RankingSnap
             score: item.hotness_score,
             game_id: item.game_id.clone(),
             event_type: item.event_type.clone(),
+            platform: Some(item.platform.clone()),
+            author: Some(item.author.clone()),
+            published_at: Some(item.published_at.clone()),
+            source_domain: Some(item.source_domain.clone()),
+            source_url: Some(item.url.clone()),
+            trust: Some(item.trust.clone()),
         })
         .collect()
 }
@@ -2429,6 +2479,12 @@ fn build_game_rankings(candidates: &[DiscoveredCandidate]) -> Vec<RankingSnapsho
                 score,
                 game_id: Some(game_id),
                 event_type: None,
+                platform: None,
+                author: None,
+                published_at: None,
+                source_domain: None,
+                source_url: None,
+                trust: None,
             },
         )
         .collect()
@@ -2472,6 +2528,12 @@ fn build_event_rankings(candidates: &[DiscoveredCandidate]) -> Vec<RankingSnapsh
                 score,
                 game_id,
                 event_type: Some(event_type),
+                platform: None,
+                author: None,
+                published_at: None,
+                source_domain: None,
+                source_url: None,
+                trust: None,
             },
         )
         .collect()
@@ -2791,7 +2853,12 @@ fn compact_shadow_text(value: &str, limit: usize) -> String {
     if compact.chars().count() <= limit {
         return compact;
     }
-    compact.chars().take(limit).collect::<String>().trim().to_string()
+    compact
+        .chars()
+        .take(limit)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 fn shadow_base_score(candidate: &CandidateDraft) -> f64 {
@@ -2829,7 +2896,10 @@ fn shadow_candidate_variants(candidate: &CandidateDraft) -> Vec<ShadowCandidateV
         b_parts.push(format!("外部验证：{verification_note}"));
     }
     if !description.is_empty() {
-        b_parts.push(format!("页面描述：{}", compact_shadow_text(&description, 60)));
+        b_parts.push(format!(
+            "页面描述：{}",
+            compact_shadow_text(&description, 60)
+        ));
     }
     let b_summary = compact_shadow_text(&b_parts.join("；"), 180);
     let b_title = if verification_note.is_empty() {
@@ -2856,14 +2926,22 @@ fn shadow_candidate_variants(candidate: &CandidateDraft) -> Vec<ShadowCandidateV
     };
 
     let b_score = (base_score
-        + if !verification_note.is_empty() { 0.08 } else { 0.03 }
+        + if !verification_note.is_empty() {
+            0.08
+        } else {
+            0.03
+        }
         + if !description.is_empty() { 0.04 } else { 0.0 })
-        .clamp(0.0, 1.0);
+    .clamp(0.0, 1.0);
     let ab_score = (base_score
-        + if !verification_note.is_empty() { 0.06 } else { 0.02 }
+        + if !verification_note.is_empty() {
+            0.06
+        } else {
+            0.02
+        }
         + if !text_excerpt.is_empty() { 0.05 } else { 0.0 }
         + if !tag_hint.is_empty() { 0.02 } else { 0.0 })
-        .clamp(0.0, 1.0);
+    .clamp(0.0, 1.0);
 
     vec![
         ShadowCandidateVariant {
@@ -2903,11 +2981,7 @@ fn stage_runtime_metric_artifact(
             "metric_{}",
             short_hash(&format!(
                 "{}:{}:{}:{}:{}",
-                run_id,
-                AUTO_REASON_STAGE_CANDIDATE_REFINE,
-                object_id,
-                mode,
-                created_at
+                run_id, AUTO_REASON_STAGE_CANDIDATE_REFINE, object_id, mode, created_at
             ))
         ),
         run_id: run_id.to_string(),
@@ -2946,19 +3020,19 @@ fn build_shadow_auto_reason_artifacts(
                 .unwrap_or(Ordering::Equal)
                 .then_with(|| left.kind.cmp(&right.kind))
         });
-        let top_variant = ranked_variants
-            .first()
-            .cloned()
-            .unwrap_or_else(|| ShadowCandidateVariant {
-                kind: "A".to_string(),
-                title: candidate.title.clone(),
-                summary: candidate.summary.clone(),
-                score: baseline_score,
-                rationale: "Fallback to incumbent baseline.".to_string(),
-            });
-        let retain_baseline =
-            top_variant.kind == "A"
-                || (top_variant.score - baseline_score) <= settings.auto_reason_do_nothing_margin;
+        let top_variant =
+            ranked_variants
+                .first()
+                .cloned()
+                .unwrap_or_else(|| ShadowCandidateVariant {
+                    kind: "A".to_string(),
+                    title: candidate.title.clone(),
+                    summary: candidate.summary.clone(),
+                    score: baseline_score,
+                    rationale: "Fallback to incumbent baseline.".to_string(),
+                });
+        let retain_baseline = top_variant.kind == "A"
+            || (top_variant.score - baseline_score) <= settings.auto_reason_do_nothing_margin;
         let winning_kind = if retain_baseline {
             "A".to_string()
         } else {
@@ -2980,61 +3054,58 @@ fn build_shadow_auto_reason_artifacts(
         let created_at = utc_now();
 
         artifacts.candidate_versions.append(&mut version_records);
-        artifacts.reasoning_judgements.push(ReasoningJudgementArtifact {
-            decision_id: format!(
-                "judge_{}",
-                short_hash(&format!("{}:{}:{}", run_id, candidate.content_id, mode))
-            ),
-            run_id: run_id.to_string(),
-            stage: AUTO_REASON_STAGE_CANDIDATE_REFINE.to_string(),
-            content_id: candidate.content_id.clone(),
-            candidate_a_version_id: artifacts
-                .candidate_versions
-                .iter()
-                .rev()
-                .find(|record| {
-                    record.content_id == candidate.content_id && record.variant_kind == "A"
-                })
-                .map(|record| record.version_id.clone())
-                .unwrap_or_else(|| winner_record.version_id.clone()),
-            candidate_b_version_id: artifacts
-                .candidate_versions
-                .iter()
-                .rev()
-                .find(|record| {
-                    record.content_id == candidate.content_id && record.variant_kind == "B"
-                })
-                .map(|record| record.version_id.clone())
-                .unwrap_or_else(|| winner_record.version_id.clone()),
-            candidate_ab_version_id: artifacts
-                .candidate_versions
-                .iter()
-                .rev()
-                .find(|record| {
-                    record.content_id == candidate.content_id && record.variant_kind == "AB"
-                })
-                .map(|record| record.version_id.clone())
-                .unwrap_or_else(|| winner_record.version_id.clone()),
-            winner_version_id: winner_record.version_id.clone(),
-            judge_round: 1,
-            judge_model: settings.auto_reason_judge_model.clone(),
-            judge_labels_json: serde_json::to_string(&vec![
-                "A",
-                "B",
-                "AB",
-                "do_nothing",
-            ])?,
-            judge_ranking_json: serde_json::to_string(&ranked_labels)?,
-            do_nothing: if retain_baseline { 1 } else { 0 },
-            stop_reason: if retain_baseline {
-                "no_improvement".to_string()
-            } else {
-                format!("shadow_select_{}", winning_kind.to_ascii_lowercase())
-            },
-            confidence: (top_variant.score - baseline_score).max(0.0),
-            latency_ms: 0,
-            created_at: created_at.clone(),
-        });
+        artifacts
+            .reasoning_judgements
+            .push(ReasoningJudgementArtifact {
+                decision_id: format!(
+                    "judge_{}",
+                    short_hash(&format!("{}:{}:{}", run_id, candidate.content_id, mode))
+                ),
+                run_id: run_id.to_string(),
+                stage: AUTO_REASON_STAGE_CANDIDATE_REFINE.to_string(),
+                content_id: candidate.content_id.clone(),
+                candidate_a_version_id: artifacts
+                    .candidate_versions
+                    .iter()
+                    .rev()
+                    .find(|record| {
+                        record.content_id == candidate.content_id && record.variant_kind == "A"
+                    })
+                    .map(|record| record.version_id.clone())
+                    .unwrap_or_else(|| winner_record.version_id.clone()),
+                candidate_b_version_id: artifacts
+                    .candidate_versions
+                    .iter()
+                    .rev()
+                    .find(|record| {
+                        record.content_id == candidate.content_id && record.variant_kind == "B"
+                    })
+                    .map(|record| record.version_id.clone())
+                    .unwrap_or_else(|| winner_record.version_id.clone()),
+                candidate_ab_version_id: artifacts
+                    .candidate_versions
+                    .iter()
+                    .rev()
+                    .find(|record| {
+                        record.content_id == candidate.content_id && record.variant_kind == "AB"
+                    })
+                    .map(|record| record.version_id.clone())
+                    .unwrap_or_else(|| winner_record.version_id.clone()),
+                winner_version_id: winner_record.version_id.clone(),
+                judge_round: 1,
+                judge_model: settings.auto_reason_judge_model.clone(),
+                judge_labels_json: serde_json::to_string(&vec!["A", "B", "AB", "do_nothing"])?,
+                judge_ranking_json: serde_json::to_string(&ranked_labels)?,
+                do_nothing: if retain_baseline { 1 } else { 0 },
+                stop_reason: if retain_baseline {
+                    "no_improvement".to_string()
+                } else {
+                    format!("shadow_select_{}", winning_kind.to_ascii_lowercase())
+                },
+                confidence: (top_variant.score - baseline_score).max(0.0),
+                latency_ms: 0,
+                created_at: created_at.clone(),
+            });
         artifacts.stage_metrics.push(stage_runtime_metric_artifact(
             run_id,
             &candidate.content_id,
@@ -3126,8 +3197,7 @@ fn sanitize_settings(mut settings: WorkbenchSettings) -> WorkbenchSettings {
     settings.auto_reason_shadow_sample_rate =
         settings.auto_reason_shadow_sample_rate.clamp(0.0, 1.0);
     settings.auto_reason_min_confidence = settings.auto_reason_min_confidence.clamp(0.0, 1.0);
-    settings.auto_reason_do_nothing_margin =
-        settings.auto_reason_do_nothing_margin.clamp(0.0, 1.0);
+    settings.auto_reason_do_nothing_margin = settings.auto_reason_do_nothing_margin.clamp(0.0, 1.0);
     settings
 }
 
@@ -3630,6 +3700,8 @@ mod tests {
         assert_eq!(run.status, "succeeded");
         let overview = service.overview().expect("overview");
         assert!(!overview.content_rankings.is_empty());
+        assert!(overview.content_rankings[0].source_url.is_some());
+        assert!(overview.content_rankings[0].trust.is_some());
         let content_id = overview.content_rankings[0]
             .content_id
             .clone()
@@ -3638,6 +3710,7 @@ mod tests {
             .content(&content_id)
             .expect("content")
             .expect("existing content");
+        assert!(!content.candidate.trust.captured_at.is_empty());
         assert!(content.breakdown.content_summary.contains("结构化总结"));
     }
 
@@ -3702,18 +3775,13 @@ mod tests {
     fn extract_json_value_accepts_markdown_code_fence() {
         let content = "Here is the result:\n```json\n{\"queries\":[\"a\",\"b\"]}\n```";
         let value = extract_json_value(content).expect("extract fenced json");
-        assert_eq!(
-            value["queries"]
-                .as_array()
-                .expect("queries array")
-                .len(),
-            2
-        );
+        assert_eq!(value["queries"].as_array().expect("queries array").len(), 2);
     }
 
     #[test]
     fn extract_json_value_accepts_surrounding_text() {
-        let content = "analysis first\n{\"game_name\":\"率土之滨\",\"topic_tags\":[\"赛季\"]}\nthanks";
+        let content =
+            "analysis first\n{\"game_name\":\"率土之滨\",\"topic_tags\":[\"赛季\"]}\nthanks";
         let value = extract_json_value(content).expect("extract surrounded json");
         assert_eq!(value["game_name"], "率土之滨");
     }

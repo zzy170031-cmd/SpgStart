@@ -90,6 +90,116 @@ function latestRun() {
   return state.overview.latest_run || null;
 }
 
+function formatDisplayTime(value) {
+  const text = String(value || "").trim();
+  if (!text) return "未记录";
+  return text.replace("T", " ").replace("Z", "");
+}
+
+function renderInlineStatusCard(label, detail, tone = "cached") {
+  return `
+    <article class="control-inline-status-card is-${escapeHtml(tone)}">
+      <strong>${escapeHtml(label)}</strong>
+      <p>${escapeHtml(detail)}</p>
+    </article>
+  `;
+}
+
+function buildContentModuleState() {
+  const run = latestRun();
+  const count = state.contentRankings.length;
+
+  if (count > 0) {
+    if (run?.status === "succeeded") {
+      return {
+        tone: "live",
+        label: "实时数据",
+        detail: `当前展示最近一次成功抓取的 ${count} 条结果，更新时间：${formatDisplayTime(
+          run.finished_at || run.started_at
+        )}`,
+      };
+    }
+    if (run?.status === "failed") {
+      return {
+        tone: "cached",
+        label: "缓存数据",
+        detail: `本轮抓取失败，当前保留上一次成功快照。失败原因：${clipText(
+          run.error_message || "未返回错误详情",
+          96
+        )}`,
+      };
+    }
+    if (run?.status === "running") {
+      return {
+        tone: "cached",
+        label: "缓存数据",
+        detail: "后台正在拉取新内容，当前先展示上一次可用快照。",
+      };
+    }
+    return {
+      tone: "cached",
+      label: "缓存数据",
+      detail: `当前展示最近一次可用快照，共 ${count} 条。`,
+    };
+  }
+
+  if (run?.status === "failed") {
+    return {
+      tone: "failed",
+      label: "抓取失败",
+      detail: `最近一次抓取失败：${clipText(run.error_message || "未返回错误详情", 96)}`,
+    };
+  }
+
+  return {
+    tone: "empty",
+    label: "暂无数据",
+    detail: "当前筛选条件下还没有可展示的真实视频内容。",
+  };
+}
+
+function buildTrustLabel(trust) {
+  if (!trust) {
+    return "来源线索未补齐";
+  }
+  if (trust.source_platform_match) {
+    return trust.fallback_non_douyin ? "抖音命中，含跨平台补位" : "抖音直连候选";
+  }
+  if (trust.fallback_non_douyin) {
+    return "跨平台补位候选";
+  }
+  return "待进一步校验";
+}
+
+function buildVideoTrustSummary(candidate) {
+  if (!candidate) {
+    return {
+      tone: "empty",
+      label: "等待选择视频",
+      detail: "从中间长横条列表选择一条视频后，这里会显示来源与抓取说明。",
+    };
+  }
+
+  const moduleState = buildContentModuleState();
+  const trust = candidate.trust || null;
+  const notes = [
+    `数据状态：${moduleState.label}`,
+    `来源校验：${buildTrustLabel(trust)}`,
+    `发布时间：${formatDisplayTime(candidate.published_at)}`,
+    `收录时间：${formatDisplayTime(trust?.captured_at)}`,
+  ];
+
+  if (trust?.verification_note) {
+    notes.push(`二次核验：${trust.verification_note}`);
+  }
+
+  return {
+    tone: moduleState.tone,
+    label: candidate.source_domain || candidate.platform || "来源未标记",
+    detail: notes.join(" | "),
+  };
+}
+
 function providerItems() {
   return Array.isArray(state.providers) ? state.providers : [];
 }
@@ -1322,6 +1432,128 @@ async function saveStrategy(form) {
 async function logout() {
   await fetchJson("/api/auth/logout", { method: "POST" });
   window.location.assign("/login");
+}
+
+function renderVideoListItem(item) {
+  const active = state.selectedContentId === item.content_id ? " is-active" : "";
+  const trustLabel = buildTrustLabel(item.trust);
+  return `
+    <button class="control-video-item${active}" type="button" data-action="select-content" data-content-id="${escapeHtml(
+      item.content_id || ""
+    )}">
+      <div class="control-video-item-top">
+        <strong>${escapeHtml(item.title)}</strong>
+        <span>${formatScore(item.score)}</span>
+      </div>
+      <div class="control-video-item-meta">
+        <span>${escapeHtml(item.game_id || "未归因游戏")}</span>
+        <span>${escapeHtml(item.platform || "平台未标记")}</span>
+        <span>${escapeHtml(formatDisplayTime(item.published_at))}</span>
+        <span>${escapeHtml(item.source_domain || item.subtitle || "来源未标记")}</span>
+        <span>${escapeHtml(trustLabel)}</span>
+      </div>
+    </button>
+  `;
+}
+
+function renderVideoPanel() {
+  const eventRow = document.getElementById("event-filter-row");
+  const videoStatus = document.getElementById("video-panel-status");
+  const videoList = document.getElementById("video-breakdown-list");
+  const moduleState = buildContentModuleState();
+
+  if (eventRow) {
+    const chips = [
+      `<button class="control-event-chip${state.selectedEventType ? "" : " is-active"}" type="button" data-action="clear-event-filter">全部事件</button>`,
+    ].concat(state.eventRankings.slice(0, 6).map(renderEventFilterChip));
+    eventRow.innerHTML = chips.join("");
+  }
+
+  if (videoStatus) {
+    videoStatus.innerHTML = renderInlineStatusCard(
+      moduleState.label,
+      moduleState.detail,
+      moduleState.tone
+    );
+  }
+
+  if (videoList) {
+    videoList.innerHTML = state.contentRankings.length
+      ? state.contentRankings.slice(0, 10).map(renderVideoListItem).join("")
+      : renderFeedbackBlock(buildVideoEmptyFeedback(), "is-panel");
+  }
+}
+
+function renderRightPanels() {
+  const meta = document.getElementById("selected-video-meta");
+  const trust = document.getElementById("selected-video-trust");
+  const breakdown = document.getElementById("selected-video-breakdown");
+  const guide = document.getElementById("selected-video-guide");
+  const addTopicButton = document.getElementById("add-topic-btn");
+  const sourceLink = document.getElementById("open-source-link");
+
+  if (!state.selectedContent) {
+    if (meta) meta.innerHTML = "";
+    if (trust) {
+      trust.innerHTML = renderInlineStatusCard(
+        "等待选择视频",
+        "从中间长横条列表选择一条视频后，这里会显示来源校验、发布时间和抓取状态。",
+        "empty"
+      );
+    }
+    if (breakdown) breakdown.innerHTML = renderFeedbackBlock(buildDetailEmptyFeedback(), "is-panel");
+    if (guide) {
+      guide.innerHTML =
+        state.contentRankings.length > 0
+          ? `<p class="control-passive-note">请选择一条视频，右侧会同步显示拆解与创作指导。</p>`
+          : `<p class="control-passive-note">当前还没有可用视频内容，完成一次有效抓取后这里会自动更新。</p>`;
+    }
+    if (addTopicButton) addTopicButton.setAttribute("disabled", "true");
+    if (sourceLink) sourceLink.setAttribute("href", "#");
+    return;
+  }
+
+  const { candidate, breakdown: detail } = state.selectedContent;
+  const trustSummary = buildVideoTrustSummary(candidate);
+
+  if (meta) {
+    meta.innerHTML = [
+      renderMetric("热度", formatScore(candidate.hotness_score)),
+      renderMetric("相关度", formatScore(candidate.doubao_relevance_score)),
+      renderMetric("交叉校验", formatScore(candidate.cross_source_score)),
+      renderMetric("来源域名", candidate.source_domain || "未记录"),
+      renderMetric("平台", candidate.platform || "未记录"),
+      renderMetric("发布时间", formatDisplayTime(candidate.published_at)),
+    ].join("");
+  }
+
+  if (trust) {
+    trust.innerHTML = renderInlineStatusCard(
+      trustSummary.label,
+      trustSummary.detail,
+      trustSummary.tone
+    );
+  }
+
+  if (breakdown) {
+    breakdown.innerHTML = [
+      renderInsightBlock("内容摘要", detail.content_summary),
+      renderInsightBlock("开头钩子", detail.hook_points),
+      renderInsightBlock("核心冲突 / 价值点", detail.core_conflict_or_value),
+      renderInsightBlock("受众适配", detail.audience_fit),
+    ].join("");
+  }
+
+  if (guide) {
+    guide.innerHTML = [
+      renderInsightBlock("二创角度", detail.adaptation_angles),
+      renderInsightBlock("标题方向", detail.title_directions),
+      renderInsightBlock("创作建议", detail.topic_pool_reason),
+    ].join("");
+  }
+
+  if (addTopicButton) addTopicButton.removeAttribute("disabled");
+  if (sourceLink) sourceLink.setAttribute("href", candidate.url);
 }
 
 let searchTimer = null;

@@ -139,6 +139,7 @@ pub fn render_workbench_page(page: WorkbenchPageView) -> String {
                 </div>
 
                 <div id="event-filter-row" class="control-event-filter-row"></div>
+                <div id="video-panel-status" class="control-inline-status"></div>
                 <div id="video-breakdown-list" class="control-video-list"></div>
               </section>
             </section>
@@ -153,6 +154,7 @@ pub fn render_workbench_page(page: WorkbenchPageView) -> String {
                 </div>
 
                 <div id="selected-video-meta" class="control-metric-grid"></div>
+                <div id="selected-video-trust" class="control-inline-status"></div>
                 <div id="selected-video-breakdown" class="control-insight-list"></div>
               </section>
 

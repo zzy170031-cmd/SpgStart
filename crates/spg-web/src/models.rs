@@ -434,6 +434,7 @@ pub struct DiscoveredCandidate {
     pub cross_source_score: f64,
     pub doubao_relevance_score: f64,
     pub hotness_score: f64,
+    pub trust: ContentTrustView,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -449,6 +450,14 @@ pub struct BreakdownCard {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentTrustView {
+    pub source_platform_match: bool,
+    pub fallback_non_douyin: bool,
+    pub verification_note: Option<String>,
+    pub captured_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RankingSnapshot {
     pub kind: String,
     pub rank: i64,
@@ -459,6 +468,12 @@ pub struct RankingSnapshot {
     pub score: f64,
     pub game_id: Option<String>,
     pub event_type: Option<String>,
+    pub platform: Option<String>,
+    pub author: Option<String>,
+    pub published_at: Option<String>,
+    pub source_domain: Option<String>,
+    pub source_url: Option<String>,
+    pub trust: Option<ContentTrustView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
