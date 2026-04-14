@@ -12,4 +12,7 @@ data/spg_desktop_state.json
 data/.spg_web_provider_secrets.enc
 data/.spg_web_provider_secrets.enc.bak_*
 
+docs/AutoReason_*.md
+docs/SPG_AutoReason_Workbench_接力说明_*.md
+
 *.tmp
