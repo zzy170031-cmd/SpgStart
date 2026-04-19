@@ -47,8 +47,8 @@ If real subagents cannot be started, say so clearly and stop short of claiming t
 
 For a new project thread, first check whether the user has provided a clear startup instruction such as:
 
-- "本线程启用 five-agent-governance 真实五代理模式"
-- "按 five-agent-governance 启动，并真实拉起 Maxwell、Dirac、Parfit、Wegener、Popper"
+- `Enable five-agent-governance real five-subagent mode in this project thread`
+- `Start five-agent-governance and launch Maxwell, Dirac, Parfit, Wegener, and Popper as real subagents`
 
 If the user has already said the equivalent in plain language, treat that as sufficient authorization.
 
