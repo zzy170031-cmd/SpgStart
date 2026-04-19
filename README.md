@@ -33,7 +33,7 @@ SPG is a Rust-first desktop workbench for Douyin-focused SLG content discovery, 
 Start here for any new project thread, major feature, merge gate, or release gate:
 
 - [SPG Governance Index](./docs/SPG_governance_index.md)
-- [Five-Agent Skill Guide](./docs/SPG_五代理治理技能说明.md)
+- [Five-Agent Skill Guide](./docs/five-agent-skill-guide.md)
 - [Five Agent Thread Startup Template](./docs/five-agent-thread-startup-template.md)
 - [five-agent-governance skill](./skills/five-agent-governance/SKILL.md)
 
@@ -47,15 +47,15 @@ The current governance chain is:
 
 ## Core Docs
 
-- [Process Overview](./docs/SPG_全流程说明.md)
-- [Implementation Logic](./docs/SPG产品实现逻辑.md)
-- [Workbench Sidecar Boundary](./docs/SPG_Workbench_Sidecar边界说明.md)
+- [Process Overview](./docs/process-overview.md)
+- [Implementation Logic](./docs/implementation-logic.md)
+- [Workbench Sidecar Boundary](./docs/workbench-sidecar-boundary.md)
 
 ## Legacy Archive
 
 These files are kept for traceability, not as current operating rules:
 
-- [Four-Agent Collaboration Archive](./docs/SPG_四代理协作机制.md)
+- [Four-Agent Collaboration Archive](./docs/four-agent-collaboration-archive.md)
 - [Third-Page Historical Snapshot (2026-04-14)](./docs/third-page-next-step-2026-04-14.md)
 
 ## Engineering Rules

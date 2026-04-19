@@ -14,7 +14,7 @@ Use it when you need to understand:
 The current project-thread baseline is the real `five-agent-governance` skill:
 
 - [five-agent-governance skill](../skills/five-agent-governance/SKILL.md)
-- [Five-Agent Skill Guide](./SPG_五代理治理技能说明.md)
+- [Five-Agent Skill Guide](./five-agent-skill-guide.md)
 - [Five Agent Thread Startup Template](./five-agent-thread-startup-template.md)
 
 ## Active Governance Chain
@@ -35,17 +35,17 @@ The current project-thread baseline is the real `five-agent-governance` skill:
 These are active documents and should be treated as current:
 
 - [README](../README.md)
-- [Five-Agent Skill Guide](./SPG_五代理治理技能说明.md)
+- [Five-Agent Skill Guide](./five-agent-skill-guide.md)
 - [Five Agent Thread Startup Template](./five-agent-thread-startup-template.md)
-- [Process Overview](./SPG_全流程说明.md)
-- [Implementation Logic](./SPG产品实现逻辑.md)
-- [Workbench Sidecar Boundary](./SPG_Workbench_Sidecar边界说明.md)
+- [Process Overview](./process-overview.md)
+- [Implementation Logic](./implementation-logic.md)
+- [Workbench Sidecar Boundary](./workbench-sidecar-boundary.md)
 
 ## Legacy Archive
 
 These are historical records and should not be used as the default rule for new project threads:
 
-- [Four-Agent Collaboration Archive](./SPG_四代理协作机制.md)
+- [Four-Agent Collaboration Archive](./four-agent-collaboration-archive.md)
 - [Third-Page Historical Snapshot (2026-04-14)](./third-page-next-step-2026-04-14.md)
 
 ## How To Start A New Project Thread

@@ -8,6 +8,10 @@ If you want one stable entry point first, start here:
 
 - [SPG Governance Index](./SPG_governance_index.md)
 
+If you need an ASCII path for terminals, diffs, or quick linking:
+
+- [five-agent-skill-guide.md](./five-agent-skill-guide.md)
+
 ## What This Skill Does
 
 It upgrades project-thread governance from an informal discussion habit into a reusable real five-subagent baseline.
