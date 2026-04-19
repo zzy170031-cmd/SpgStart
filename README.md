@@ -1,5 +1,7 @@
 # SPG
 
+> Governance note: the legacy four-agent text in this repository is now superseded by the real `five-agent-governance` skill under `skills/five-agent-governance/`. New project threads should start from the five-agent startup protocol, not the older four-agent-only convention.
+
 SPG 是一个以 Rust 为核心的桌面化 SLG 热点工作台，当前主线目标是围绕抖音上的 SLG 内容，完成从 API 配置、真实数据发现、内容拆解、热度聚合到创作指导的闭环。
 
 当前主线特征：

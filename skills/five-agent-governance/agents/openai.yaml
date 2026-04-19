@@ -1,0 +1,7 @@
+interface:
+  display_name: "Five Agent Governance"
+  short_description: "Start real five-subagent project governance in a Codex thread."
+  default_prompt: "Use $five-agent-governance to boot a real Maxwell/Dirac/Parfit/Wegener/Popper council and govern this project thread."
+
+policy:
+  allow_implicit_invocation: true
