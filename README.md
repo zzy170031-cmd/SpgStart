@@ -33,7 +33,7 @@ SPG is a Rust-first desktop workbench for Douyin-focused SLG content discovery, 
 Start here for any new project thread, major feature, merge gate, or release gate:
 
 - [SPG Governance Index](./docs/SPG_governance_index.md)
-- [SPG 五代理治理技能说明](./docs/SPG_五代理治理技能说明.md)
+- [Five-Agent Skill Guide](./docs/SPG_五代理治理技能说明.md)
 - [Five Agent Thread Startup Template](./docs/five-agent-thread-startup-template.md)
 - [five-agent-governance skill](./skills/five-agent-governance/SKILL.md)
 
@@ -47,16 +47,16 @@ The current governance chain is:
 
 ## Core Docs
 
-- [SPG 全流程说明](./docs/SPG_全流程说明.md)
-- [SPG 产品实现逻辑](./docs/SPG产品实现逻辑.md)
-- [SPG Workbench Sidecar 边界说明](./docs/SPG_Workbench_Sidecar边界说明.md)
+- [Process Overview](./docs/SPG_全流程说明.md)
+- [Implementation Logic](./docs/SPG产品实现逻辑.md)
+- [Workbench Sidecar Boundary](./docs/SPG_Workbench_Sidecar边界说明.md)
 
 ## Legacy Archive
 
 These files are kept for traceability, not as current operating rules:
 
-- [SPG 四代理协作机制（历史归档）](./docs/SPG_四代理协作机制.md)
-- [第三页收口记录（2026-04-14，历史快照）](./docs/third-page-next-step-2026-04-14.md)
+- [Four-Agent Collaboration Archive](./docs/SPG_四代理协作机制.md)
+- [Third-Page Historical Snapshot (2026-04-14)](./docs/third-page-next-step-2026-04-14.md)
 
 ## Engineering Rules
 

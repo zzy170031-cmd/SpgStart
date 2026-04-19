@@ -1,18 +1,18 @@
-# SPG 五代理治理技能说明
+# Five-Agent Skill Guide
 
-本仓库已经收录 `five-agent-governance` 技能源码，路径如下：
+This repository includes the `five-agent-governance` skill at:
 
 - `skills/five-agent-governance/`
 
-如果你只想先看一份稳定入口，请优先读：
+If you want one stable entry point first, start here:
 
 - [SPG Governance Index](./SPG_governance_index.md)
 
-## 这份技能解决什么问题
+## What This Skill Does
 
-它把项目线程里的治理流程从“临时讨论习惯”升级成“固定可复用的真实五代理基座”。
+It upgrades project-thread governance from an informal discussion habit into a reusable real five-subagent baseline.
 
-固定角色如下：
+The fixed agents are:
 
 - `Maxwell`
 - `Dirac`
@@ -20,15 +20,15 @@
 - `Wegener`
 - `Popper`
 
-## 核心规则
+## Core Rules
 
-- 项目线程以固定启动协议开场
-- 五个真实子代理全部成功启动后，才进入正式治理
-- `Wegener` 必须完成两轮质询与两轮自审
-- `Popper` 必须完成三轮反问与最终五态裁决
-- 未完成启动或裁决时，不允许伪装成完整治理
+- every governed project thread starts from a fixed startup protocol
+- all five real subagents must start successfully before formal governance begins
+- `Wegener` must complete two interrogation rounds and two self-reviews
+- `Popper` must complete three challenge rounds and issue the final five-state verdict
+- incomplete startup or incomplete verdicts must never be presented as full governance
 
-## 目录
+## Directory Layout
 
 - `SKILL.md`
 - `agents/openai.yaml`
@@ -43,26 +43,34 @@
   - `checklists.md`
   - `samples.md`
 
-## 安装
+## Install
 
-直接执行：
+Run from the repo root:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-five-agent-governance-skill.ps1
 ```
 
-默认安装到：
+Default install target:
 
 ```text
 %USERPROFILE%\.codex\skills\five-agent-governance
 ```
 
-## 启动示例
+## Startup Example
+
+### English
+
+```text
+Enable five-agent-governance real five-subagent mode in this project thread. Launch Maxwell, Dirac, Parfit, Wegener, and Popper as real subagents. Current stage: new project startup.
+```
+
+### Chinese
 
 ```text
 本线程启用 five-agent-governance 真实五代理模式。真实拉起 Maxwell、Dirac、Parfit、Wegener、Popper。当前阶段是新项目启动。
 ```
 
-更多启动模板请看：
+For more templates, see:
 
 - [Five Agent Thread Startup Template](./five-agent-thread-startup-template.md)

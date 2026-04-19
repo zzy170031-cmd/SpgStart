@@ -14,7 +14,7 @@ Use it when you need to understand:
 The current project-thread baseline is the real `five-agent-governance` skill:
 
 - [five-agent-governance skill](../skills/five-agent-governance/SKILL.md)
-- [SPG 五代理治理技能说明](./SPG_五代理治理技能说明.md)
+- [Five-Agent Skill Guide](./SPG_五代理治理技能说明.md)
 - [Five Agent Thread Startup Template](./five-agent-thread-startup-template.md)
 
 ## Active Governance Chain
@@ -35,22 +35,30 @@ The current project-thread baseline is the real `five-agent-governance` skill:
 These are active documents and should be treated as current:
 
 - [README](../README.md)
-- [SPG 五代理治理技能说明](./SPG_五代理治理技能说明.md)
+- [Five-Agent Skill Guide](./SPG_五代理治理技能说明.md)
 - [Five Agent Thread Startup Template](./five-agent-thread-startup-template.md)
-- [SPG 全流程说明](./SPG_全流程说明.md)
-- [SPG 产品实现逻辑](./SPG产品实现逻辑.md)
-- [SPG Workbench Sidecar 边界说明](./SPG_Workbench_Sidecar边界说明.md)
+- [Process Overview](./SPG_全流程说明.md)
+- [Implementation Logic](./SPG产品实现逻辑.md)
+- [Workbench Sidecar Boundary](./SPG_Workbench_Sidecar边界说明.md)
 
 ## Legacy Archive
 
 These are historical records and should not be used as the default rule for new project threads:
 
-- [SPG 四代理协作机制（历史归档）](./SPG_四代理协作机制.md)
-- [第三页收口记录（2026-04-14，历史快照）](./third-page-next-step-2026-04-14.md)
+- [Four-Agent Collaboration Archive](./SPG_四代理协作机制.md)
+- [Third-Page Historical Snapshot (2026-04-14)](./third-page-next-step-2026-04-14.md)
 
 ## How To Start A New Project Thread
 
-Use the startup template directly, or paste this minimal version:
+Use the startup template directly, or paste one of the following minimal versions:
+
+### English
+
+```text
+Enable five-agent-governance real five-subagent mode in this project thread. Launch Maxwell, Dirac, Parfit, Wegener, and Popper as real subagents. Current stage: new project startup.
+```
+
+### Chinese
 
 ```text
 本线程启用 five-agent-governance 真实五代理模式。真实拉起 Maxwell、Dirac、Parfit、Wegener、Popper。当前阶段是新项目启动。
