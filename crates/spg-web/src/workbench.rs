@@ -3694,23 +3694,94 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_now_populates_rankings_and_content() {
+    async fn run_now_offline_golden_path_persists_candidate_rankings_topic_pool_and_overview() {
         let service = build_test_service(false).expect("service");
+        let gate_state = service.provider_store.gate_state().expect("gate state");
+        assert!(gate_state.local_user_confirmed);
+        assert!(gate_state.api_gate_passed);
+
+        let unlock_state = service.provider_store.unlock_state().expect("unlock state");
+        assert!(unlock_state.unlocked);
+        assert_eq!(unlock_state.ready_count, unlock_state.total_count);
+
         let run = service.run_now().await.expect("run");
         assert_eq!(run.status, "succeeded");
+        assert!(run.candidate_count > 0);
+        assert!(run.shortlisted_count > 0);
+        assert!(run.content_count > 0);
+
         let overview = service.overview().expect("overview");
-        assert!(!overview.content_rankings.is_empty());
-        assert!(overview.content_rankings[0].source_url.is_some());
-        assert!(overview.content_rankings[0].trust.is_some());
-        let content_id = overview.content_rankings[0]
-            .content_id
-            .clone()
-            .expect("content id");
+        let latest_run = overview.latest_run.as_ref().expect("latest run");
+        assert_eq!(latest_run.run_id, run.run_id);
+        assert_eq!(latest_run.status, "succeeded");
+        assert_eq!(latest_run.candidate_count, run.candidate_count);
+        assert_eq!(latest_run.shortlisted_count, run.shortlisted_count);
+        assert_eq!(latest_run.content_count, run.content_count);
+        assert_eq!(overview.content_rankings.len() as i64, run.content_count);
+        assert!(!overview.game_rankings.is_empty());
+        assert_eq!(overview.topic_pool_count, 0);
+
+        let top_ranking = &overview.content_rankings[0];
+        assert_eq!(top_ranking.rank, 1);
+        let source_url = top_ranking.source_url.as_ref().expect("ranking source url");
+        assert!(source_url.contains("douyin.com/video/"));
+        assert!(top_ranking.trust.is_some());
+        let content_id = top_ranking.content_id.clone().expect("content id");
         let content = service
             .content(&content_id)
             .expect("content")
             .expect("existing content");
+        assert_eq!(content.candidate.content_id, content_id);
         assert!(!content.candidate.trust.captured_at.is_empty());
+        assert!(!content.breakdown.content_summary.is_empty());
+        assert!(!content.breakdown.topic_pool_reason.is_empty());
+
+        let topic_entry = service
+            .add_topic_pool(TopicPoolCreateRequest {
+                content_id: content_id.clone(),
+                note: "Governed golden-path entry".to_string(),
+            })
+            .expect("add topic pool");
+        assert_eq!(topic_entry.content_id, content_id);
+        assert_eq!(topic_entry.source_url, *source_url);
+        assert!(topic_entry.note.contains("golden-path"));
+
+        let topic_pool = service.topic_pool().expect("topic pool");
+        let topic_pool_entry = topic_pool
+            .iter()
+            .find(|item| item.content_id == content_id)
+            .expect("topic pool entry for ranked content");
+        assert_eq!(topic_pool_entry.source_url, *source_url);
+        assert!(topic_pool_entry.score > 0.0);
+
+        let overview_after_topic_pool = service.overview().expect("overview after topic pool");
+        assert_eq!(overview_after_topic_pool.topic_pool_count, topic_pool.len());
+
+        let conn = service.connect().expect("connect");
+        let persisted_content_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM content_candidates WHERE run_id = ?1",
+                params![&run.run_id],
+                |row| row.get(0),
+            )
+            .expect("persisted content rows");
+        let persisted_content_rankings: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM ranking_snapshots WHERE run_id = ?1 AND kind = 'content' AND is_current = 1",
+                params![&run.run_id],
+                |row| row.get(0),
+            )
+            .expect("persisted content rankings");
+        let persisted_topic_pool_rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM topic_pool", [], |row| row.get(0))
+            .expect("persisted topic pool rows");
+
+        assert_eq!(persisted_content_rows, run.content_count);
+        assert_eq!(persisted_content_rankings, run.content_count);
+        assert_eq!(
+            persisted_topic_pool_rows as usize,
+            overview_after_topic_pool.topic_pool_count
+        );
         assert!(content.breakdown.content_summary.contains("结构化总结"));
     }
 

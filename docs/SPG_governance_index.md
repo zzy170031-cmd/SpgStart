@@ -37,6 +37,7 @@ These are active documents and should be treated as current:
 - [README](../README.md)
 - [Five-Agent Skill Guide](./five-agent-skill-guide.md)
 - [Five Agent Thread Startup Template](./five-agent-thread-startup-template.md)
+- [First Governed Pass Example](./first-governed-pass-example.md)
 - [Process Overview](./process-overview.md)
 - [Implementation Logic](./implementation-logic.md)
 - [Workbench Sidecar Boundary](./workbench-sidecar-boundary.md)
