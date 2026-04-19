@@ -1,50 +1,60 @@
-# SPG 四代理协作机制
+# SPG 四代理协作机制（历史归档）
 
-这份文档用于固化 SPG 主工程后续默认采用的固定协作关系。
+> Superseded: this document records the older four-agent collaboration model and is kept only for historical traceability. New project threads should use the real `five-agent-governance` skill and its startup protocol instead.
 
-## 固定角色
+## 当前状态
 
-- `代理 A / Maxwell`：产品经理
-- `代理 B / Dirac`：软件工程师
-- `代理 C / Parfit`：产品 UI 与产品测试运维
-- `代理 D / Wegener`：总设计师
+这份文档不再是 SPG 的现行治理规则。现行入口请看：
 
-## 固定职责
+- `skills/five-agent-governance/`
+- [SPG_五代理治理技能说明.md](./SPG_五代理治理技能说明.md)
+- [five-agent-thread-startup-template.md](./five-agent-thread-startup-template.md)
 
-### A / Maxwell
+## 历史上的四代理定义
 
-- 从产品实现角度审查方案
-- 从用户体验与运营使用角度提出建设意见
-- 关注功能是否真的便于理解、便于使用、便于推进
+旧机制曾固定使用以下四个角色：
 
-### B / Dirac
+- `Maxwell`：产品经理
+- `Dirac`：软件工程师
+- `Parfit`：产品 UI 与产品测试运维
+- `Wegener`：总设计师
 
-- 以 Rust 主工程为核心承接技术实现
-- 从架构、运行链路、数据闭环、稳定性角度给出技术建议
-- 关注方案是否真正可运行、可维护、可验证
+它的核心工作方式是：
 
-### C / Parfit
+1. `Maxwell / Dirac / Parfit` 先各自独立检查。
+2. `Wegener` 汇总三方意见。
+3. `Wegener` 对三方做两轮质询。
+4. `Wegener` 输出最后的综合结论。
 
-- 从 UI 呈现、布局、交互细节角度提出意见
-- 从测试和运维角度验证是否易于使用、易于排障、易于验收
-- 关注“看得清、用得顺、测得通”
+## 为什么它被替代
 
-### D / Wegener
+旧四代理机制保留了“多视角审查”的优点，但它缺少一个独立的最终门禁角色，导致：
 
-- 汇总 A / B / C 的结论
-- 分别对 A / B / C 做两轮质询
-- 在质询结束后，给出最终决策方案
+- `Wegener` 同时承担整合与放行，裁决权过重
+- 历史线程里容易把“整合方案”和“最终放行”混成一步
+- 缺少明确的 `WAIT / NO / ESCALATE` 门禁语义
 
-## 固定工作流
+因此现行机制升级为五代理：
 
-1. 每次更新后，A / B / C 先各自独立检查。
-2. D 汇总三人的结论后，分别对 A / B / C 做两轮质询。
-3. 质询结束后，D 归纳总结，并给出最终决策方案。
-4. 若本轮没有真实问题，可以明确写“无新增问题”，不强行挑问题。
-5. 所有意见必须以落地、执行、验证为主，不以形式化挑刺为主。
+- `Maxwell`
+- `Dirac`
+- `Parfit`
+- `Wegener`
+- `Popper`
 
-## 固定复用约束
+新增的 `Popper` 专门负责最终反问与裁决，避免把旧四代理直接换皮成新名字。
 
-- 后续默认只允许使用这四个固定角色，不再临时改成另一套名字。
-- 若会话层代理实例失效，必须按 `同名 / 同职责 / 同顺序` 立即重建后再继续。
-- 所有产品复盘、工程决策、上线前检查，都统一使用这四个角色体系。
+## 与现行五代理的关系
+
+如果你在阅读旧记录时看到了四代理结论，可以这样理解：
+
+- `Maxwell / Dirac / Parfit` 的职责思路仍有参考价值
+- `Wegener` 的整合与质询逻辑被保留
+- 最终裁决权已经迁移到 `Popper`
+- 新线程不再以这份文档作为默认工作协议
+
+## 迁移规则
+
+- 保留本文件，目的是保留演进痕迹，不是继续作为现行规范
+- 后续 README、流程文档、实现逻辑文档，一律以五代理治理 skill 为准
+- 若需要启动新项目线程，请直接使用五代理启动模板，而不是引用本文件
