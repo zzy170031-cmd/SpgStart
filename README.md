@@ -32,6 +32,7 @@ SPG is a Rust-first desktop workbench for Douyin-focused SLG content discovery, 
 
 Start here for any new project thread, major feature, merge gate, or release gate:
 
+- [SPG Governance Index](./docs/SPG_governance_index.md)
 - [SPG 五代理治理技能说明](./docs/SPG_五代理治理技能说明.md)
 - [Five Agent Thread Startup Template](./docs/five-agent-thread-startup-template.md)
 - [five-agent-governance skill](./skills/five-agent-governance/SKILL.md)

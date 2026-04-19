@@ -1,0 +1,71 @@
+# SPG Governance Index
+
+This file is the stable governance entry point for the repository.
+
+Use it when you need to understand:
+
+- what the current governance baseline is
+- how to start a new real five-agent project thread
+- which documents are active
+- which documents are legacy archive only
+
+## Current Baseline
+
+The current project-thread baseline is the real `five-agent-governance` skill:
+
+- [five-agent-governance skill](../skills/five-agent-governance/SKILL.md)
+- [SPG 五代理治理技能说明](./SPG_五代理治理技能说明.md)
+- [Five Agent Thread Startup Template](./five-agent-thread-startup-template.md)
+
+## Active Governance Chain
+
+- `Maxwell`
+  Need clarification, scope, priority, success criteria
+- `Dirac`
+  Technical shape, implementation path, module boundaries
+- `Parfit`
+  UX, testability, ops, consistency, maintainability
+- `Wegener`
+  Two interrogation rounds, two self-reviews, integrated candidate plan
+- `Popper`
+  Three challenge rounds and final verdict
+
+## Current Working Docs
+
+These are active documents and should be treated as current:
+
+- [README](../README.md)
+- [SPG 五代理治理技能说明](./SPG_五代理治理技能说明.md)
+- [Five Agent Thread Startup Template](./five-agent-thread-startup-template.md)
+- [SPG 全流程说明](./SPG_全流程说明.md)
+- [SPG 产品实现逻辑](./SPG产品实现逻辑.md)
+- [SPG Workbench Sidecar 边界说明](./SPG_Workbench_Sidecar边界说明.md)
+
+## Legacy Archive
+
+These are historical records and should not be used as the default rule for new project threads:
+
+- [SPG 四代理协作机制（历史归档）](./SPG_四代理协作机制.md)
+- [第三页收口记录（2026-04-14，历史快照）](./third-page-next-step-2026-04-14.md)
+
+## How To Start A New Project Thread
+
+Use the startup template directly, or paste this minimal version:
+
+```text
+本线程启用 five-agent-governance 真实五代理模式。真实拉起 Maxwell、Dirac、Parfit、Wegener、Popper。当前阶段是新项目启动。
+```
+
+## Install / Reinstall The Skill
+
+From the repo root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-five-agent-governance-skill.ps1
+```
+
+Default install target:
+
+```text
+%USERPROFILE%\.codex\skills\five-agent-governance
+```

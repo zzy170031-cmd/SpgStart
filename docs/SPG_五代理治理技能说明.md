@@ -1,10 +1,18 @@
 # SPG 五代理治理技能说明
 
-本仓库已收录 `five-agent-governance` 技能源码，路径如下：
+本仓库已经收录 `five-agent-governance` 技能源码，路径如下：
 
 - `skills/five-agent-governance/`
 
-该技能用于在项目线程开始时，以真实五子代理模式启动治理链路：
+如果你只想先看一份稳定入口，请优先读：
+
+- [SPG Governance Index](./SPG_governance_index.md)
+
+## 这份技能解决什么问题
+
+它把项目线程里的治理流程从“临时讨论习惯”升级成“固定可复用的真实五代理基座”。
+
+固定角色如下：
 
 - `Maxwell`
 - `Dirac`
@@ -12,7 +20,7 @@
 - `Wegener`
 - `Popper`
 
-核心规则：
+## 核心规则
 
 - 项目线程以固定启动协议开场
 - 五个真实子代理全部成功启动后，才进入正式治理
@@ -37,7 +45,7 @@
 
 ## 安装
 
-可直接执行：
+直接执行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-five-agent-governance-skill.ps1
@@ -54,3 +62,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-five-agent-governance
 ```text
 本线程启用 five-agent-governance 真实五代理模式。真实拉起 Maxwell、Dirac、Parfit、Wegener、Popper。当前阶段是新项目启动。
 ```
+
+更多启动模板请看：
+
+- [Five Agent Thread Startup Template](./five-agent-thread-startup-template.md)
